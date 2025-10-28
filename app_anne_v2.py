@@ -363,35 +363,120 @@ st.header("📅 Ocupação das Salas")
 if occ_f.empty:
     st.warning("Não foi possível identificar dados de **Ocupação** nas abas enviadas.")
 else:
-    # Heatmap: dia x sala (percentual ocupado)
-    df_heat = (occ_f[occ_f["STATUS"] != "ignorar"]
-               .groupby(["DIA","SALA"], as_index=False)
-               .apply(lambda g: (g["STATUS"]=="ocupado").mean()*100)
-               .rename(columns={None:"OCUPACAO_%"}))
-    if not df_heat.empty:
-        fig = px.density_heatmap(df_heat, x="DIA", y="SALA", z="OCUPACAO_%",
-                                 color_continuous_scale="RdYlGn", histfunc="avg")
-        fig.update_layout(height=450, margin=dict(l=20,r=20,t=30,b=20))
-        st.plotly_chart(fig, use_container_width=True)
+    occ_valid = occ_f[occ_f["STATUS"] != "ignorar"].copy()
+    if occ_valid.empty:
+        st.info("Todos os registros de ocupação foram marcados como 'ignorar'.")
+    else:
+        occ_valid["OCUPADO"] = (
+            occ_valid["STATUS"].astype(str).str.lower().eq("ocupado").astype(float)
+        )
 
-    # Barras por sala
-    df_bar = (occ_f[occ_f["STATUS"] != "ignorar"]
-              .groupby(["SALA"], as_index=False)
-              .apply(lambda g: (g["STATUS"]=="ocupado").mean()*100)
-              .rename(columns={None:"OCUPACAO_%"})
-              .sort_values("OCUPACAO_%", ascending=False))
-    if not df_bar.empty:
-        fig2 = px.bar(df_bar, x="OCUPACAO_%", y="SALA", orientation="h",
-                      title="Taxa de ocupação por sala (%)")
-        fig2.update_layout(height=450, margin=dict(l=20,r=20,t=50,b=20))
-        st.plotly_chart(fig2, use_container_width=True)
+        def sort_dia(dia):
+            if pd.isna(dia):
+                return len(DIAS)
+            dia_norm = strip_accents(str(dia)).upper()
+            for idx, ref in enumerate(DIAS):
+                if ref in dia_norm:
+                    return idx
+            return len(DIAS)
+
+        dias_presentes = sorted(occ_valid["DIA"].dropna().unique(), key=sort_dia)
+
+        if dias_presentes:
+            st.subheader("Visão diária (sala x turno)")
+            tabs = st.tabs([str(dia).title() for dia in dias_presentes])
+            for tab, dia in zip(tabs, dias_presentes):
+                with tab:
+                    df_dia = occ_valid[occ_valid["DIA"] == dia]
+                    df_slots = (
+                        df_dia.groupby(["SALA", "TURNO"], as_index=False)
+                        .agg(
+                            {
+                                "STATUS": lambda vals: first_non_null(vals),
+                                "MEDICO_RAW": lambda vals: first_non_null(vals),
+                            }
+                        )
+                    )
+
+                    if df_slots.empty:
+                        st.info("Sem dados suficientes para este dia.")
+                    else:
+                        def build_display(row):
+                            status = str(row["STATUS"]).lower()
+                            if status == "ocupado":
+                                medico = row.get("MEDICO_RAW")
+                                if pd.isna(medico):
+                                    return "Ocupado"
+                                text = str(medico).strip()
+                                return text if text else "Ocupado"
+                            if status == "disponível":
+                                return "Livre"
+                            return ""
+
+                        df_slots["DISPLAY"] = df_slots.apply(build_display, axis=1)
+
+                        # Mantém a ordem original das salas e garante colunas por turno
+                        salas_order = (
+                            df_slots["SALA"]
+                            .drop_duplicates()
+                            .tolist()
+                        )
+                        table = (
+                            df_slots.pivot(index="SALA", columns="TURNO", values="DISPLAY")
+                            .reindex(index=salas_order)
+                        )
+                        table = table.reindex(columns=TURNS, fill_value="")
+
+                        def highlight_free(val):
+                            if isinstance(val, str) and val.strip().lower() == "livre":
+                                return "background-color: #d4edda; color: #155724; font-weight: 600;"
+                            return ""
+
+                        st.dataframe(
+                            table.style.applymap(highlight_free),
+                            use_container_width=True,
+                        )
+                        st.caption(
+                            "Nome do médico responsável por sala e turno; células livres destacadas em verde."
+                        )
+
+        # Barras por sala (visão consolidada)
+        df_bar = (
+            occ_valid.groupby(["SALA"], as_index=False)["OCUPADO"].mean()
+            .rename(columns={"OCUPADO": "OCUPACAO_%"})
+        )
+        df_bar["OCUPACAO_%"] = df_bar["OCUPACAO_%"] * 100
+        df_bar = df_bar.sort_values("OCUPACAO_%", ascending=False)
+        if not df_bar.empty:
+            fig2 = px.bar(
+                df_bar,
+                x="OCUPACAO_%",
+                y="SALA",
+                orientation="h",
+                title="Taxa média de ocupação por sala (%)",
+            )
+            fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig2, use_container_width=True)
 
     # Stacked status por consultório
-    df_stack = (occ_f.assign(STATUS2=occ_f["STATUS"].replace({"disponível":"Disponível","ocupado":"Ocupado","ignorar":"Ignorar"}))
-                .groupby(["CONSULTORIO","STATUS2"], as_index=False).size())
+    df_stack = (
+        occ_f.assign(
+            STATUS2=occ_f["STATUS"].replace(
+                {"disponível": "Disponível", "ocupado": "Ocupado", "ignorar": "Ignorar"}
+            )
+        )
+        .groupby(["CONSULTORIO", "STATUS2"], as_index=False)
+        .size()
+    )
     if not df_stack.empty:
-        fig3 = px.bar(df_stack, x="CONSULTORIO", y="size", color="STATUS2",
-                      title="Distribuição de status por consultório", barmode="stack")
+        fig3 = px.bar(
+            df_stack,
+            x="CONSULTORIO",
+            y="size",
+            color="STATUS2",
+            title="Distribuição de status por consultório",
+            barmode="stack",
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
     with st.expander("🔎 Tabela detalhada (Ocupação)"):
