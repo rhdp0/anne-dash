@@ -90,7 +90,8 @@ def extract_consultorio(sheet_name: str) -> Optional[str]:
         return None
 
     sheet_norm = strip_accents(str(sheet_name)).upper()
-    if "AUTOIMUNE" in sheet_norm:
+    sheet_compact = sheet_norm.replace(" ", "")
+    if "AUTOIMUNE" in sheet_compact:
         return "Autoimune"
 
     digits = re.findall(r"\d+", sheet_name)
