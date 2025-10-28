@@ -2,6 +2,8 @@
 # streamlit_app.py
 import io
 import re
+from typing import Optional
+
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -76,6 +78,28 @@ OCC_PREFIX = "OCUPAÇÃO DAS SALAS"
 MED_PREFIX = "MÉDICOS"
 PROD_PREFIX = "PRODUTIVIDADE"
 IGNORAR_PALAVRAS_DEFAULT = ["alugada", "solb"]
+
+
+def extract_consultorio(sheet_name: str) -> Optional[str]:
+    """Normalize sheet name into a consultório label.
+
+    Keeps the previous numeric extraction behaviour, but also allows
+    named consultórios such as "Autoimune".
+    """
+    if not sheet_name:
+        return None
+
+    sheet_norm = strip_accents(str(sheet_name)).upper()
+    sheet_compact = sheet_norm.replace(" ", "")
+    if "AUTOIMUNE" in sheet_compact:
+        return "Auto Imune"
+
+    digits = re.findall(r"\d+", sheet_name)
+    if digits:
+        return ", ".join(digits)
+
+    cleaned = re.sub(r"[^A-Z0-9, ]+", "", sheet_norm).strip()
+    return cleaned.title() if cleaned else None
 
 def normalize_cols(df: pd.DataFrame):
     df = df.copy()
@@ -255,7 +279,7 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
 
                     occ_rows.append({
                         "SHEET_ORIGEM": sheet,
-                        "CONSULTORIO": re.sub(r"[^0-9,]+", "", sheet).strip() or None,
+                        "CONSULTORIO": extract_consultorio(sheet),
                         "SALA": sala,
                         "DIA": dia,
                         "TURNO": turno,
