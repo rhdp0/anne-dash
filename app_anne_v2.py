@@ -388,57 +388,26 @@ else:
             for tab, dia in zip(tabs, dias_presentes):
                 with tab:
                     df_dia = occ_valid[occ_valid["DIA"] == dia]
-                    df_slots = (
-                        df_dia.groupby(["SALA", "TURNO"], as_index=False)
-                        .agg(
-                            {
-                                "STATUS": lambda vals: first_non_null(vals),
-                                "MEDICO_RAW": lambda vals: first_non_null(vals),
-                            }
-                        )
+                    df_heat = (
+                        df_dia.groupby(["SALA", "TURNO"], as_index=False)["OCUPADO"]
+                        .mean()
+                        .rename(columns={"OCUPADO": "OCUPACAO_%"})
                     )
-
-                    if df_slots.empty:
+                    df_heat["OCUPACAO_%"] = df_heat["OCUPACAO_%"] * 100
+                    if df_heat.empty:
                         st.info("Sem dados suficientes para este dia.")
                     else:
-                        def build_display(row):
-                            status = str(row["STATUS"]).lower()
-                            if status == "ocupado":
-                                medico = row.get("MEDICO_RAW")
-                                if pd.isna(medico):
-                                    return "Ocupado"
-                                text = str(medico).strip()
-                                return text if text else "Ocupado"
-                            if status == "disponível":
-                                return "Livre"
-                            return ""
-
-                        df_slots["DISPLAY"] = df_slots.apply(build_display, axis=1)
-
-                        # Mantém a ordem original das salas e garante colunas por turno
-                        salas_order = (
-                            df_slots["SALA"]
-                            .drop_duplicates()
-                            .tolist()
+                        fig = px.density_heatmap(
+                            df_heat,
+                            x="TURNO",
+                            y="SALA",
+                            z="OCUPACAO_%",
+                            color_continuous_scale="RdYlGn",
                         )
-                        table = (
-                            df_slots.pivot(index="SALA", columns="TURNO", values="DISPLAY")
-                            .reindex(index=salas_order)
-                        )
-                        table = table.reindex(columns=TURNS, fill_value="")
-
-                        def highlight_free(val):
-                            if isinstance(val, str) and val.strip().lower() == "livre":
-                                return "background-color: #d4edda; color: #155724; font-weight: 600;"
-                            return ""
-
-                        st.dataframe(
-                            table.style.applymap(highlight_free),
-                            use_container_width=True,
-                        )
-                        st.caption(
-                            "Nome do médico responsável por sala e turno; células livres destacadas em verde."
-                        )
+                        fig.update_layout(height=380, margin=dict(l=20, r=20, t=40, b=20))
+                        fig.update_xaxes(categoryorder="array", categoryarray=TURNS)
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.caption("Percentual médio de slots ocupados por sala e turno no dia selecionado.")
 
         # Barras por sala (visão consolidada)
         df_bar = (
