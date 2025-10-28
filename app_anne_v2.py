@@ -80,26 +80,44 @@ PROD_PREFIX = "PRODUTIVIDADE"
 IGNORAR_PALAVRAS_DEFAULT = ["alugada", "solb"]
 
 
+def normalize_consultorio_label(label: Optional[str]) -> Optional[str]:
+    """Apply consistent formatting to consultório labels from different sources."""
+
+    if label is None or (isinstance(label, float) and pd.isna(label)):
+        return None
+
+    label_str = str(label).strip()
+    if not label_str:
+        return None
+
+    label_norm = strip_accents(label_str)
+    label_compact = re.sub(r"[^A-Z0-9]", "", label_norm.upper())
+    if "AUTOIMUNE" in label_compact:
+        return "Auto imune"
+
+    return label_str
+
+
 def extract_consultorio(sheet_name: str) -> Optional[str]:
     """Normalize sheet name into a consultório label.
 
     Keeps the previous numeric extraction behaviour, but also allows
-    named consultórios such as "Autoimune".
+    named consultórios such as "Auto imune".
     """
     if not sheet_name:
         return None
 
     sheet_norm = strip_accents(str(sheet_name)).upper()
-    sheet_compact = sheet_norm.replace(" ", "")
+    sheet_compact = re.sub(r"[^A-Z0-9]", "", sheet_norm)
     if "AUTOIMUNE" in sheet_compact:
-        return "Auto Imune"
+        return "Auto imune"
 
     digits = re.findall(r"\d+", sheet_name)
     if digits:
-        return ", ".join(digits)
+        return normalize_consultorio_label(", ".join(digits))
 
     cleaned = re.sub(r"[^A-Z0-9, ]+", "", sheet_norm).strip()
-    return cleaned.title() if cleaned else None
+    return normalize_consultorio_label(cleaned.title() if cleaned else None)
 
 def normalize_cols(df: pd.DataFrame):
     df = df.copy()
@@ -187,6 +205,8 @@ def parse_doctors(xls: pd.ExcelFile):
         # Tipos
         if "TIPO_PLANO" not in doctors.columns:
             doctors["TIPO_PLANO"] = np.nan  # se não existir na planilha
+        if "CONSULTORIO" in doctors.columns:
+            doctors["CONSULTORIO"] = doctors["CONSULTORIO"].apply(normalize_consultorio_label)
         return doctors
     return pd.DataFrame()
 
