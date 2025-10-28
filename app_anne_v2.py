@@ -309,6 +309,7 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
     occ = pd.DataFrame(occ_rows)
     # Limpa consultório (ex.: "1, 2" -> múltiplos). Se vier vazio, define como "1"
     if not occ.empty:
+        occ["CONSULTORIO"] = occ["CONSULTORIO"].apply(normalize_consultorio_label)
         occ["CONSULTORIO"] = occ["CONSULTORIO"].replace("", np.nan)
         occ["CONSULTORIO"] = occ["CONSULTORIO"].fillna("1")
     return occ
