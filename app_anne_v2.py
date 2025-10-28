@@ -6,8 +6,25 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import streamlit as st
+from streamlit import config as st_config
 
 st.set_page_config(page_title="Dashboard Consultórios", layout="wide")
+
+THEME_OPTIONS = {"Escuro": "dark", "Claro": "light"}
+
+
+def apply_theme(base_theme: str):
+    """Adjust Streamlit and Plotly appearance according to the selected theme."""
+    base = base_theme if base_theme in ("dark", "light") else "dark"
+    # Update Streamlit base theme and align Plotly templates for better contrast
+    st_config.set_option("theme.base", base)
+    px.defaults.template = "plotly_dark" if base == "dark" else "plotly_white"
+
+
+if "theme_base" not in st.session_state:
+    st.session_state["theme_base"] = "dark"
+
+apply_theme(st.session_state["theme_base"])
 
 st.title("🏥 Dashboard de Consultórios — Ocupação, Médicos e Produtividade")
 
@@ -325,6 +342,19 @@ st.divider()
 # ---------------------------
 # Filtros globais
 # ---------------------------
+st.sidebar.header("Aparência")
+theme_label = st.sidebar.radio(
+    "Tema do dashboard",
+    list(THEME_OPTIONS.keys()),
+    index=list(THEME_OPTIONS.values()).index(st.session_state["theme_base"]),
+)
+selected_theme = THEME_OPTIONS[theme_label]
+if selected_theme != st.session_state["theme_base"]:
+    st.session_state["theme_base"] = selected_theme
+    apply_theme(selected_theme)
+    st.rerun()
+
+st.sidebar.divider()
 st.sidebar.header("Filtros")
 consultorios_disp = sorted(set((occ["CONSULTORIO"].dropna().unique().tolist() if not occ.empty else []) +
                                (doctors["CONSULTORIO"].dropna().unique().tolist() if "CONSULTORIO" in doctors.columns else [])))
