@@ -567,12 +567,10 @@ else:
                 st.plotly_chart(fig2, use_container_width=True)
 
     # Stacked status por consultório
+    status_labels = {"disponível": "Disponível", "ocupado": "Ocupado"}
     df_stack = (
-        occ_f.assign(
-            STATUS2=occ_f["STATUS"].replace(
-                {"disponível": "Disponível", "ocupado": "Ocupado", "ignorar": "Ignorar"}
-            )
-        )
+        occ_f[occ_f["STATUS"].isin(status_labels)]
+        .assign(STATUS2=lambda df: df["STATUS"].map(status_labels))
         .groupby(["CONSULTORIO", "STATUS2"], as_index=False)
         .size()
     )
