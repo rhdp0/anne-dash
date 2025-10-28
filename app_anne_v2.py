@@ -434,6 +434,7 @@ else:
         occ_valid["OCUPADO"] = (
             occ_valid["STATUS"].astype(str).str.lower().eq("ocupado").astype(float)
         )
+        occ_valid["CONSULTORIO"] = occ_valid["CONSULTORIO"].fillna("1").astype(str)
 
         def sort_dia(dia):
             if pd.isna(dia):
@@ -443,77 +444,141 @@ else:
                 return DAY_INDEX.get(canonical, len(DAY_ORDER))
             return len(DAY_ORDER)
 
-        dias_presentes = sorted(occ_valid["DIA"].dropna().unique(), key=sort_dia)
+        def sort_consultorio(label):
+            num = try_number(label)
+            if num is None:
+                return (1, str(label))
+            return (0, num)
 
-        if dias_presentes:
-            st.subheader("Visão diária (sala x turno)")
-            tabs = st.tabs([str(dia).title() for dia in dias_presentes])
-            for tab, dia in zip(tabs, dias_presentes):
-                with tab:
-                    df_dia = occ_valid[occ_valid["DIA"] == dia]
-                    df_slots = (
-                        df_dia.groupby(["SALA", "TURNO"], as_index=False)
-                        .agg(
-                            {
-                                "STATUS": lambda vals: first_non_null(vals),
-                                "MEDICO_RAW": lambda vals: first_non_null(vals),
-                            }
+        consultorios_presentes = sorted(
+            occ_valid["CONSULTORIO"].dropna().unique().tolist(),
+            key=sort_consultorio,
+        )
+
+        if not consultorios_presentes:
+            st.info("Não foi possível determinar os consultórios nas abas de ocupação.")
+
+        for consultorio in consultorios_presentes:
+            occ_cons = occ_valid[occ_valid["CONSULTORIO"] == consultorio]
+            if occ_cons.empty:
+                continue
+
+            st.subheader(f"Consultório {consultorio}")
+
+            dias_presentes = sorted(occ_cons["DIA"].dropna().unique(), key=sort_dia)
+
+            if dias_presentes:
+                st.markdown("**Visão diária (sala x turno)**")
+                tabs = st.tabs([str(dia).title() for dia in dias_presentes])
+                for tab, dia in zip(tabs, dias_presentes):
+                    with tab:
+                        df_dia = occ_cons[occ_cons["DIA"] == dia]
+                        df_slots = (
+                            df_dia.groupby(["SALA", "TURNO"], as_index=False)
+                            .agg(
+                                {
+                                    "STATUS": lambda vals: first_non_null(vals),
+                                    "MEDICO_RAW": lambda vals: first_non_null(vals),
+                                }
+                            )
                         )
-                    )
 
-                    if df_slots.empty:
-                        st.info("Sem dados suficientes para este dia.")
-                    else:
-                        def build_display(row):
-                            status = str(row["STATUS"]).lower()
-                            if status == "ocupado":
-                                medico = row.get("MEDICO_RAW")
-                                if pd.isna(medico):
-                                    return "Ocupado"
-                                text = str(medico).strip()
-                                return text if text else "Ocupado"
-                            # Slots livres ficam sem texto, apenas com destaque visual
-                            return ""
+                        if df_slots.empty:
+                            st.info("Sem dados suficientes para este dia.")
+                        else:
+                            def build_display(row):
+                                status = str(row["STATUS"]).lower()
+                                if status == "ocupado":
+                                    medico = row.get("MEDICO_RAW")
+                                    if pd.isna(medico):
+                                        return "Ocupado"
+                                    text = str(medico).strip()
+                                    return text if text else "Ocupado"
+                                # Slots livres ficam sem texto, apenas com destaque visual
+                                return ""
 
-                        df_slots["DISPLAY"] = df_slots.apply(build_display, axis=1)
+                            df_slots["DISPLAY"] = df_slots.apply(build_display, axis=1)
 
-                        # Mantém a ordem original das salas e garante colunas por turno
-                        salas_order = (
-                            df_slots["SALA"]
-                            .drop_duplicates()
-                            .tolist()
-                        )
-                        display_table = (
-                            df_slots.pivot(index="SALA", columns="TURNO", values="DISPLAY")
-                            .reindex(index=salas_order)
-                        )
-                        display_table = display_table.reindex(columns=TURNS, fill_value="")
+                            salas_order = (
+                                df_slots["SALA"]
+                                .drop_duplicates()
+                                .tolist()
+                            )
+                            display_table = (
+                                df_slots.pivot(index="SALA", columns="TURNO", values="DISPLAY")
+                                .reindex(index=salas_order)
+                            )
+                            display_table = display_table.reindex(columns=TURNS, fill_value="")
 
-                        status_table = (
-                            df_slots.pivot(index="SALA", columns="TURNO", values="STATUS")
-                            .reindex(index=salas_order)
-                        )
-                        status_table = status_table.reindex(columns=TURNS)
+                            status_table = (
+                                df_slots.pivot(index="SALA", columns="TURNO", values="STATUS")
+                                .reindex(index=salas_order)
+                            )
+                            status_table = status_table.reindex(columns=TURNS)
 
-                        def highlight_free(row):
-                            statuses = status_table.loc[row.name]
-                            styles = []
-                            for col in row.index:
-                                if isinstance(statuses.get(col), str) and statuses.get(col).lower() == "disponível":
-                                    styles.append("background-color: #d4edda; color: #155724; font-weight: 600;")
-                                else:
-                                    styles.append("")
-                            return styles
+                            def highlight_free(row):
+                                statuses = status_table.loc[row.name]
+                                styles = []
+                                for col in row.index:
+                                    if (
+                                        isinstance(statuses.get(col), str)
+                                        and statuses.get(col).lower() == "disponível"
+                                    ):
+                                        styles.append(
+                                            "background-color: #d4edda; color: #155724; font-weight: 600;"
+                                        )
+                                    else:
+                                        styles.append("")
+                                return styles
 
-                        styled = display_table.fillna("").style.apply(highlight_free, axis=1)
+                            styled = display_table.fillna("").style.apply(highlight_free, axis=1)
 
-                        st.dataframe(
-                            styled,
-                            use_container_width=True,
-                        )
-                        st.caption(
-                            "Nome do médico responsável por sala e turno; células livres destacadas em verde."
-                        )
+                            st.dataframe(
+                                styled,
+                                use_container_width=True,
+                            )
+                            st.caption(
+                                "Nome do médico responsável por sala e turno; células livres destacadas em verde."
+                            )
+
+            df_heat = (
+                occ_cons.groupby(["DIA", "TURNO"], as_index=False)["OCUPADO"].mean()
+                .assign(OCUPACAO_PCT=lambda d: d["OCUPADO"] * 100)
+            )
+            if not df_heat.empty:
+                df_heat["DIA"] = pd.Categorical(
+                    df_heat["DIA"],
+                    categories=sorted(df_heat["DIA"].unique(), key=sort_dia),
+                    ordered=True,
+                )
+                df_heat = df_heat.sort_values(["DIA", "TURNO"])
+                fig = px.density_heatmap(
+                    df_heat,
+                    x="TURNO",
+                    y="DIA",
+                    z="OCUPACAO_PCT",
+                    title=f"Mapa de calor — % de ocupação (por dia x turno) — Consultório {consultorio}",
+                    color_continuous_scale="Reds",
+                )
+                fig.update_layout(height=400, margin=dict(l=20, r=20, t=50, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+
+            df_bar_cons = (
+                occ_cons.groupby(["SALA"], as_index=False)["OCUPADO"].mean()
+                .rename(columns={"OCUPADO": "OCUPACAO_%"})
+            )
+            df_bar_cons["OCUPACAO_%"] = df_bar_cons["OCUPACAO_%"] * 100
+            df_bar_cons = df_bar_cons.sort_values("OCUPACAO_%", ascending=False)
+            if not df_bar_cons.empty:
+                fig2 = px.bar(
+                    df_bar_cons,
+                    x="OCUPACAO_%",
+                    y="SALA",
+                    orientation="h",
+                    title=f"Taxa média de ocupação por sala (%) — Consultório {consultorio}",
+                )
+                fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
+                st.plotly_chart(fig2, use_container_width=True)
 
         # Barras por sala (visão consolidada)
         df_bar = (
