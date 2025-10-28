@@ -23,8 +23,38 @@ uploaded = st.file_uploader("📤 Envie o arquivo .xlsx", type=["xlsx"])
 # ---------------------------
 # Helpers
 # ---------------------------
-DIAS = ["SEGUNDA","TERÇA","QUARTA","QUINTA","SEXTA","SÁBADO","SABADO","DOMINGO"]
-TURNS = ["MANHÃ","TARDE","NOITE"]
+DAY_ORDER = [
+    "Segunda",
+    "Terça",
+    "Quarta",
+    "Quinta",
+    "Sexta",
+    "Sábado",
+    "Domingo",
+]
+DAY_INDEX = {day: idx for idx, day in enumerate(DAY_ORDER)}
+DAY_ALIASES = {
+    "SEGUNDA": "Segunda",
+    "SEGUNDA-FEIRA": "Segunda",
+    "SEGUNDA FEIRA": "Segunda",
+    "TERCA": "Terça",
+    "TERCA-FEIRA": "Terça",
+    "TERCA FEIRA": "Terça",
+    "QUARTA": "Quarta",
+    "QUARTA-FEIRA": "Quarta",
+    "QUARTA FEIRA": "Quarta",
+    "QUINTA": "Quinta",
+    "QUINTA-FEIRA": "Quinta",
+    "QUINTA FEIRA": "Quinta",
+    "SEXTA": "Sexta",
+    "SEXTA-FEIRA": "Sexta",
+    "SEXTA FEIRA": "Sexta",
+    "SABADO": "Sábado",
+    "SABADO-FEIRA": "Sábado",
+    "SABADO FEIRA": "Sábado",
+    "DOMINGO": "Domingo",
+}
+TURNS = ["MANHÃ", "TARDE"]
 OCC_PREFIX = "OCUPAÇÃO DAS SALAS"
 MED_PREFIX = "MÉDICOS"
 PROD_PREFIX = "PRODUTIVIDADE"
@@ -47,6 +77,15 @@ def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
 def strip_accents(s: str) -> str:
     import unicodedata
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+def canonical_day(label):
+    if label is None or (isinstance(label, float) and pd.isna(label)):
+        return None
+    label_norm = strip_accents(str(label)).upper()
+    for alias, canonical in DAY_ALIASES.items():
+        if alias in label_norm:
+            return canonical
+    return None
 
 def clean_text(s):
     if pd.isna(s):
@@ -135,14 +174,13 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
                 val = clean_text(df.iloc[0][c]) if 0 in df.index else None
                 if val:
                     val_up = strip_accents(val).upper()
-                    if any(t in val_up for t in ["MANH", "TARD", "NOIT"]):
-                        # Mapeia para MANHÃ/TARDE/NOITE
+                    if any(t in val_up for t in ["MANH", "TARD"]):
                         if "MAN" in val_up:
                             turnos_por_col[c] = "MANHÃ"
                         elif "TARD" in val_up:
                             turnos_por_col[c] = "TARDE"
-                        elif "NOIT" in val_up:
-                            turnos_por_col[c] = "NOITE"
+                        else:
+                            turnos_por_col[c] = None
                     else:
                         turnos_por_col[c] = None
                 else:
@@ -155,15 +193,11 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
                 header = strip_accents(str(c)).upper()
                 # Algumas versões trazem "Unnamed: X" para TARDE; usamos o último dia nomeado
                 is_unnamed = header.startswith("UNNAMED")
-                if not is_unnamed and any(d in header for d in DIAS):
-                    # Descobre qual dia
-                    for d in DIAS:
-                        if d in header:
-                            last_day = "SÁBADO" if d in ("SABADO","SÁBADO") else d.capitalize()
-                            break
-                    dias_por_col[c] = last_day
-                else:
-                    dias_por_col[c] = last_day
+                if not is_unnamed:
+                    matched_day = canonical_day(header)
+                    if matched_day:
+                        last_day = matched_day
+                dias_por_col[c] = last_day
 
             # Tenta descobrir a coluna da SALA (onde há "SALA x")
             # Normalmente é a primeira coluna
@@ -363,35 +397,131 @@ st.header("📅 Ocupação das Salas")
 if occ_f.empty:
     st.warning("Não foi possível identificar dados de **Ocupação** nas abas enviadas.")
 else:
-    # Heatmap: dia x sala (percentual ocupado)
-    df_heat = (occ_f[occ_f["STATUS"] != "ignorar"]
-               .groupby(["DIA","SALA"], as_index=False)
-               .apply(lambda g: (g["STATUS"]=="ocupado").mean()*100)
-               .rename(columns={None:"OCUPACAO_%"}))
-    if not df_heat.empty:
-        fig = px.density_heatmap(df_heat, x="DIA", y="SALA", z="OCUPACAO_%",
-                                 color_continuous_scale="RdYlGn", histfunc="avg")
-        fig.update_layout(height=450, margin=dict(l=20,r=20,t=30,b=20))
-        st.plotly_chart(fig, use_container_width=True)
+    occ_valid = occ_f[occ_f["STATUS"] != "ignorar"].copy()
+    if occ_valid.empty:
+        st.info("Todos os registros de ocupação foram marcados como 'ignorar'.")
+    else:
+        occ_valid["OCUPADO"] = (
+            occ_valid["STATUS"].astype(str).str.lower().eq("ocupado").astype(float)
+        )
 
-    # Barras por sala
-    df_bar = (occ_f[occ_f["STATUS"] != "ignorar"]
-              .groupby(["SALA"], as_index=False)
-              .apply(lambda g: (g["STATUS"]=="ocupado").mean()*100)
-              .rename(columns={None:"OCUPACAO_%"})
-              .sort_values("OCUPACAO_%", ascending=False))
-    if not df_bar.empty:
-        fig2 = px.bar(df_bar, x="OCUPACAO_%", y="SALA", orientation="h",
-                      title="Taxa de ocupação por sala (%)")
-        fig2.update_layout(height=450, margin=dict(l=20,r=20,t=50,b=20))
-        st.plotly_chart(fig2, use_container_width=True)
+        def sort_dia(dia):
+            if pd.isna(dia):
+                return len(DAY_ORDER)
+            canonical = canonical_day(dia)
+            if canonical:
+                return DAY_INDEX.get(canonical, len(DAY_ORDER))
+            return len(DAY_ORDER)
+
+        dias_presentes = sorted(occ_valid["DIA"].dropna().unique(), key=sort_dia)
+
+        if dias_presentes:
+            st.subheader("Visão diária (sala x turno)")
+            tabs = st.tabs([str(dia).title() for dia in dias_presentes])
+            for tab, dia in zip(tabs, dias_presentes):
+                with tab:
+                    df_dia = occ_valid[occ_valid["DIA"] == dia]
+                    df_slots = (
+                        df_dia.groupby(["SALA", "TURNO"], as_index=False)
+                        .agg(
+                            {
+                                "STATUS": lambda vals: first_non_null(vals),
+                                "MEDICO_RAW": lambda vals: first_non_null(vals),
+                            }
+                        )
+                    )
+
+                    if df_slots.empty:
+                        st.info("Sem dados suficientes para este dia.")
+                    else:
+                        def build_display(row):
+                            status = str(row["STATUS"]).lower()
+                            if status == "ocupado":
+                                medico = row.get("MEDICO_RAW")
+                                if pd.isna(medico):
+                                    return "Ocupado"
+                                text = str(medico).strip()
+                                return text if text else "Ocupado"
+                            # Slots livres ficam sem texto, apenas com destaque visual
+                            return ""
+
+                        df_slots["DISPLAY"] = df_slots.apply(build_display, axis=1)
+
+                        # Mantém a ordem original das salas e garante colunas por turno
+                        salas_order = (
+                            df_slots["SALA"]
+                            .drop_duplicates()
+                            .tolist()
+                        )
+                        display_table = (
+                            df_slots.pivot(index="SALA", columns="TURNO", values="DISPLAY")
+                            .reindex(index=salas_order)
+                        )
+                        display_table = display_table.reindex(columns=TURNS, fill_value="")
+
+                        status_table = (
+                            df_slots.pivot(index="SALA", columns="TURNO", values="STATUS")
+                            .reindex(index=salas_order)
+                        )
+                        status_table = status_table.reindex(columns=TURNS)
+
+                        def highlight_free(row):
+                            statuses = status_table.loc[row.name]
+                            styles = []
+                            for col in row.index:
+                                if isinstance(statuses.get(col), str) and statuses.get(col).lower() == "disponível":
+                                    styles.append("background-color: #d4edda; color: #155724; font-weight: 600;")
+                                else:
+                                    styles.append("")
+                            return styles
+
+                        styled = display_table.fillna("").style.apply(highlight_free, axis=1)
+
+                        st.dataframe(
+                            styled,
+                            use_container_width=True,
+                        )
+                        st.caption(
+                            "Nome do médico responsável por sala e turno; células livres destacadas em verde."
+                        )
+
+        # Barras por sala (visão consolidada)
+        df_bar = (
+            occ_valid.groupby(["SALA"], as_index=False)["OCUPADO"].mean()
+            .rename(columns={"OCUPADO": "OCUPACAO_%"})
+        )
+        df_bar["OCUPACAO_%"] = df_bar["OCUPACAO_%"] * 100
+        df_bar = df_bar.sort_values("OCUPACAO_%", ascending=False)
+        if not df_bar.empty:
+            fig2 = px.bar(
+                df_bar,
+                x="OCUPACAO_%",
+                y="SALA",
+                orientation="h",
+                title="Taxa média de ocupação por sala (%)",
+            )
+            fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig2, use_container_width=True)
 
     # Stacked status por consultório
-    df_stack = (occ_f.assign(STATUS2=occ_f["STATUS"].replace({"disponível":"Disponível","ocupado":"Ocupado","ignorar":"Ignorar"}))
-                .groupby(["CONSULTORIO","STATUS2"], as_index=False).size())
+    df_stack = (
+        occ_f.assign(
+            STATUS2=occ_f["STATUS"].replace(
+                {"disponível": "Disponível", "ocupado": "Ocupado", "ignorar": "Ignorar"}
+            )
+        )
+        .groupby(["CONSULTORIO", "STATUS2"], as_index=False)
+        .size()
+    )
     if not df_stack.empty:
-        fig3 = px.bar(df_stack, x="CONSULTORIO", y="size", color="STATUS2",
-                      title="Distribuição de status por consultório", barmode="stack")
+        fig3 = px.bar(
+            df_stack,
+            x="CONSULTORIO",
+            y="size",
+            color="STATUS2",
+            title="Distribuição de status por consultório",
+            barmode="stack",
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
     with st.expander("🔎 Tabela detalhada (Ocupação)"):
