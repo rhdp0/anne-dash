@@ -75,7 +75,7 @@ TURNS = ["MANHÃ", "TARDE"]
 OCC_PREFIX = "OCUPAÇÃO DAS SALAS"
 MED_PREFIX = "MÉDICOS"
 PROD_PREFIX = "PRODUTIVIDADE"
-IGNORAR_PALAVRAS_DEFAULT = ["alugada", "SOLB"]
+IGNORAR_PALAVRAS_DEFAULT = ["alugada", "solb"]
 
 def normalize_cols(df: pd.DataFrame):
     df = df.copy()
@@ -170,7 +170,12 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
     """Transforma as abas de ocupação em formato longo: uma linha por sala/dia/turno."""
     if ignorar_keywords is None:
         ignorar_keywords = IGNORAR_PALAVRAS_DEFAULT
-    
+    ignorar_keywords = [
+        strip_accents(str(kw)).lower()
+        for kw in ignorar_keywords
+        if kw is not None and str(kw).strip()
+    ]
+
     occ_rows = []
     for sheet in xls.sheet_names:
         if sheet.upper().startswith(OCC_PREFIX):
@@ -227,6 +232,8 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
                     # ignora linhas sem SALA
                     continue
                 sala = sala_raw
+                sala_norm = strip_accents(sala).lower()
+                sala_ignorar = any(kw in sala_norm for kw in ignorar_keywords)
 
                 for c in df.columns[1:]:
                     dia = dias_por_col.get(c)
@@ -236,9 +243,9 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
                     val = clean_text(row[c])
 
                     # Classificar status
-                    status = "disponível"
+                    status = "ignorar" if sala_ignorar else "disponível"
                     medico_texto = None
-                    if val:
+                    if not sala_ignorar and val:
                         vlow = strip_accents(val).lower()
                         if any(kw in vlow for kw in ignorar_keywords):
                             status = "ignorar"
@@ -560,12 +567,10 @@ else:
                 st.plotly_chart(fig2, use_container_width=True)
 
     # Stacked status por consultório
+    status_labels = {"disponível": "Disponível", "ocupado": "Ocupado"}
     df_stack = (
-        occ_f.assign(
-            STATUS2=occ_f["STATUS"].replace(
-                {"disponível": "Disponível", "ocupado": "Ocupado", "ignorar": "Ignorar"}
-            )
-        )
+        occ_f[occ_f["STATUS"].isin(status_labels)]
+        .assign(STATUS2=lambda df: df["STATUS"].map(status_labels))
         .groupby(["CONSULTORIO", "STATUS2"], as_index=False)
         .size()
     )
