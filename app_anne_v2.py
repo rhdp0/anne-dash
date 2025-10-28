@@ -541,28 +541,6 @@ else:
                                 "Nome do médico responsável por sala e turno; células livres destacadas em verde."
                             )
 
-            df_heat = (
-                occ_cons.groupby(["DIA", "TURNO"], as_index=False)["OCUPADO"].mean()
-                .assign(OCUPACAO_PCT=lambda d: d["OCUPADO"] * 100)
-            )
-            if not df_heat.empty:
-                df_heat["DIA"] = pd.Categorical(
-                    df_heat["DIA"],
-                    categories=sorted(df_heat["DIA"].unique(), key=sort_dia),
-                    ordered=True,
-                )
-                df_heat = df_heat.sort_values(["DIA", "TURNO"])
-                fig = px.density_heatmap(
-                    df_heat,
-                    x="TURNO",
-                    y="DIA",
-                    z="OCUPACAO_PCT",
-                    title=f"Mapa de calor — % de ocupação (por dia x turno) — Consultório {consultorio}",
-                    color_continuous_scale="Reds",
-                )
-                fig.update_layout(height=400, margin=dict(l=20, r=20, t=50, b=20))
-                st.plotly_chart(fig, use_container_width=True)
-
             df_bar_cons = (
                 occ_cons.groupby(["SALA"], as_index=False)["OCUPADO"].mean()
                 .rename(columns={"OCUPADO": "OCUPACAO_%"})
@@ -577,6 +555,7 @@ else:
                     orientation="h",
                     title=f"Taxa média de ocupação por sala (%) — Consultório {consultorio}",
                 )
+                fig2.update_traces(texttemplate="%{x:.1f}%", textposition="inside")
                 fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
                 st.plotly_chart(fig2, use_container_width=True)
 
@@ -595,6 +574,7 @@ else:
                 orientation="h",
                 title="Taxa média de ocupação por sala (%)",
             )
+            fig2.update_traces(texttemplate="%{x:.1f}%", textposition="inside")
             fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig2, use_container_width=True)
 
