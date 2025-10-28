@@ -75,7 +75,7 @@ TURNS = ["MANHÃ", "TARDE"]
 OCC_PREFIX = "OCUPAÇÃO DAS SALAS"
 MED_PREFIX = "MÉDICOS"
 PROD_PREFIX = "PRODUTIVIDADE"
-IGNORAR_PALAVRAS_DEFAULT = ["alugada", "soube"]
+IGNORAR_PALAVRAS_DEFAULT = ["alugada", "SOLB"]
 
 def normalize_cols(df: pd.DataFrame):
     df = df.copy()
@@ -558,25 +558,6 @@ else:
                 fig2.update_traces(texttemplate="%{x:.1f}%", textposition="inside")
                 fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
                 st.plotly_chart(fig2, use_container_width=True)
-
-        # Barras por sala (visão consolidada)
-        df_bar = (
-            occ_valid.groupby(["SALA"], as_index=False)["OCUPADO"].mean()
-            .rename(columns={"OCUPADO": "OCUPACAO_%"})
-        )
-        df_bar["OCUPACAO_%"] = df_bar["OCUPACAO_%"] * 100
-        df_bar = df_bar.sort_values("OCUPACAO_%", ascending=False)
-        if not df_bar.empty:
-            fig2 = px.bar(
-                df_bar,
-                x="OCUPACAO_%",
-                y="SALA",
-                orientation="h",
-                title="Taxa média de ocupação por sala (%)",
-            )
-            fig2.update_traces(texttemplate="%{x:.1f}%", textposition="inside")
-            fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
-            st.plotly_chart(fig2, use_container_width=True)
 
     # Stacked status por consultório
     df_stack = (
