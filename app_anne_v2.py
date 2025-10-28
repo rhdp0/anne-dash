@@ -23,8 +23,38 @@ uploaded = st.file_uploader("📤 Envie o arquivo .xlsx", type=["xlsx"])
 # ---------------------------
 # Helpers
 # ---------------------------
-DIAS = ["SEGUNDA","TERÇA","QUARTA","QUINTA","SEXTA","SÁBADO","SABADO","DOMINGO"]
-TURNS = ["MANHÃ","TARDE","NOITE"]
+DAY_ORDER = [
+    "Segunda",
+    "Terça",
+    "Quarta",
+    "Quinta",
+    "Sexta",
+    "Sábado",
+    "Domingo",
+]
+DAY_INDEX = {day: idx for idx, day in enumerate(DAY_ORDER)}
+DAY_ALIASES = {
+    "SEGUNDA": "Segunda",
+    "SEGUNDA-FEIRA": "Segunda",
+    "SEGUNDA FEIRA": "Segunda",
+    "TERCA": "Terça",
+    "TERCA-FEIRA": "Terça",
+    "TERCA FEIRA": "Terça",
+    "QUARTA": "Quarta",
+    "QUARTA-FEIRA": "Quarta",
+    "QUARTA FEIRA": "Quarta",
+    "QUINTA": "Quinta",
+    "QUINTA-FEIRA": "Quinta",
+    "QUINTA FEIRA": "Quinta",
+    "SEXTA": "Sexta",
+    "SEXTA-FEIRA": "Sexta",
+    "SEXTA FEIRA": "Sexta",
+    "SABADO": "Sábado",
+    "SABADO-FEIRA": "Sábado",
+    "SABADO FEIRA": "Sábado",
+    "DOMINGO": "Domingo",
+}
+TURNS = ["MANHÃ", "TARDE"]
 OCC_PREFIX = "OCUPAÇÃO DAS SALAS"
 MED_PREFIX = "MÉDICOS"
 PROD_PREFIX = "PRODUTIVIDADE"
@@ -47,6 +77,15 @@ def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
 def strip_accents(s: str) -> str:
     import unicodedata
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+def canonical_day(label):
+    if label is None or (isinstance(label, float) and pd.isna(label)):
+        return None
+    label_norm = strip_accents(str(label)).upper()
+    for alias, canonical in DAY_ALIASES.items():
+        if alias in label_norm:
+            return canonical
+    return None
 
 def clean_text(s):
     if pd.isna(s):
@@ -135,14 +174,13 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
                 val = clean_text(df.iloc[0][c]) if 0 in df.index else None
                 if val:
                     val_up = strip_accents(val).upper()
-                    if any(t in val_up for t in ["MANH", "TARD", "NOIT"]):
-                        # Mapeia para MANHÃ/TARDE/NOITE
+                    if any(t in val_up for t in ["MANH", "TARD"]):
                         if "MAN" in val_up:
                             turnos_por_col[c] = "MANHÃ"
                         elif "TARD" in val_up:
                             turnos_por_col[c] = "TARDE"
-                        elif "NOIT" in val_up:
-                            turnos_por_col[c] = "NOITE"
+                        else:
+                            turnos_por_col[c] = None
                     else:
                         turnos_por_col[c] = None
                 else:
@@ -155,15 +193,11 @@ def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
                 header = strip_accents(str(c)).upper()
                 # Algumas versões trazem "Unnamed: X" para TARDE; usamos o último dia nomeado
                 is_unnamed = header.startswith("UNNAMED")
-                if not is_unnamed and any(d in header for d in DIAS):
-                    # Descobre qual dia
-                    for d in DIAS:
-                        if d in header:
-                            last_day = "SÁBADO" if d in ("SABADO","SÁBADO") else d.capitalize()
-                            break
-                    dias_por_col[c] = last_day
-                else:
-                    dias_por_col[c] = last_day
+                if not is_unnamed:
+                    matched_day = canonical_day(header)
+                    if matched_day:
+                        last_day = matched_day
+                dias_por_col[c] = last_day
 
             # Tenta descobrir a coluna da SALA (onde há "SALA x")
             # Normalmente é a primeira coluna
@@ -373,12 +407,11 @@ else:
 
         def sort_dia(dia):
             if pd.isna(dia):
-                return len(DIAS)
-            dia_norm = strip_accents(str(dia)).upper()
-            for idx, ref in enumerate(DIAS):
-                if ref in dia_norm:
-                    return idx
-            return len(DIAS)
+                return len(DAY_ORDER)
+            canonical = canonical_day(dia)
+            if canonical:
+                return DAY_INDEX.get(canonical, len(DAY_ORDER))
+            return len(DAY_ORDER)
 
         dias_presentes = sorted(occ_valid["DIA"].dropna().unique(), key=sort_dia)
 
