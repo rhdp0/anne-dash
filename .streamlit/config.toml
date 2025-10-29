@@ -1,0 +1,4 @@
+[server]
+# Avoid watchdog PermissionError on Windows/OneDrive by using polling
+fileWatcherType = "poll"
+
