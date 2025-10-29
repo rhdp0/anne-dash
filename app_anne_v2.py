@@ -1,716 +1,408 @@
 
-# streamlit_app.py
-import io
 import re
-from typing import Optional
-
+from pathlib import Path
 import pandas as pd
-import numpy as np
-import plotly.express as px
 import streamlit as st
-from streamlit import config as st_config
+import plotly.express as px
 
 st.set_page_config(page_title="Dashboard Consultórios", layout="wide")
 
-THEME_OPTIONS = {"Escuro": "dark", "Claro": "light"}
+# --- Corporate styling ---
+st.markdown("""
+<style>
+.block-container {padding-top: 1.5rem;}
+div[data-testid="stMetricValue"] {color:#0F4C81;}
+h1, h2, h3 { color:#1f2a44; }
+section[data-testid="stSidebar"] {background-color:#f5f7fb}
+</style>
+""", unsafe_allow_html=True)
 
+st.title("🏥 Dashboard de Ocupação dos Consultórios")
+st.caption("Lendo somente as abas **CONSULTÓRIO** (ignorando 'OCUPAÇÃO DAS SALAS'). Integra a aba **Médicos** quando presente.")
 
-def apply_theme(base_theme: str):
-    """Adjust Streamlit and Plotly appearance according to the selected theme."""
-    base = base_theme if base_theme in ("dark", "light") else "dark"
-    # Update Streamlit base theme and align Plotly templates for better contrast
-    st_config.set_option("theme.base", base)
-    px.defaults.template = "plotly_dark" if base == "dark" else "plotly_white"
+DEFAULT_PATH = Path("/mnt/data/ESCALA DOS CONSULTORIOS DEFINITIVO.xlsx")
 
+# ---------- Sidebar: Upload ----------
+st.sidebar.header("📂 Fonte de Dados")
+uploaded = st.sidebar.file_uploader("Envie o Excel (.xlsx)", type=["xlsx"], key="main_xlsx")
 
-if "theme_base" not in st.session_state:
-    st.session_state["theme_base"] = "dark"
-
-apply_theme(st.session_state["theme_base"])
-
-st.title("🏥 Dashboard de Consultórios — Ocupação, Médicos e Produtividade")
-
-st.markdown(
-    """
-    Faça upload da planilha Excel (com abas como **OCUPAÇÃO DAS SALAS 1/2/3**, **MÉDICOS 1/2/3/4**, **PRODUTIVIDADE...**).
-    O app vai consolidar os dados, criar indicadores e gráficos com filtros.
-    """
-)
-
-uploaded = st.file_uploader("📤 Envie o arquivo .xlsx", type=["xlsx"])
-
-# ---------------------------
-# Helpers
-# ---------------------------
-DAY_ORDER = [
-    "Segunda",
-    "Terça",
-    "Quarta",
-    "Quinta",
-    "Sexta",
-    "Sábado",
-    "Domingo",
-]
-DAY_INDEX = {day: idx for idx, day in enumerate(DAY_ORDER)}
-DAY_ALIASES = {
-    "SEGUNDA": "Segunda",
-    "SEGUNDA-FEIRA": "Segunda",
-    "SEGUNDA FEIRA": "Segunda",
-    "TERCA": "Terça",
-    "TERCA-FEIRA": "Terça",
-    "TERCA FEIRA": "Terça",
-    "QUARTA": "Quarta",
-    "QUARTA-FEIRA": "Quarta",
-    "QUARTA FEIRA": "Quarta",
-    "QUINTA": "Quinta",
-    "QUINTA-FEIRA": "Quinta",
-    "QUINTA FEIRA": "Quinta",
-    "SEXTA": "Sexta",
-    "SEXTA-FEIRA": "Sexta",
-    "SEXTA FEIRA": "Sexta",
-    "SABADO": "Sábado",
-    "SABADO-FEIRA": "Sábado",
-    "SABADO FEIRA": "Sábado",
-    "DOMINGO": "Domingo",
-}
-TURNS = ["MANHÃ", "TARDE"]
-OCC_PREFIX = "OCUPAÇÃO DAS SALAS"
-MED_PREFIX = "MÉDICOS"
-PROD_PREFIX = "PRODUTIVIDADE"
-IGNORAR_PALAVRAS_DEFAULT = ["alugada", "solb"]
-
-
-def normalize_consultorio_label(label: Optional[str]) -> Optional[str]:
-    """Apply consistent formatting to consultório labels from different sources."""
-
-    if label is None or (isinstance(label, float) and pd.isna(label)):
-        return None
-
-    label_str = str(label).strip()
-    if not label_str:
-        return None
-
-    label_norm = strip_accents(label_str)
-    label_compact = re.sub(r"[^A-Z0-9]", "", label_norm.upper())
-    if "AUTOIMUNE" in label_compact:
-        return "Auto imune"
-
-    return label_str
-
-
-def extract_consultorio(sheet_name: str) -> Optional[str]:
-    """Normalize sheet name into a consultório label.
-
-    Keeps the previous numeric extraction behaviour, but also allows
-    named consultórios such as "Auto imune".
-    """
-    if not sheet_name:
-        return None
-
-    sheet_norm = strip_accents(str(sheet_name)).upper()
-    sheet_compact = re.sub(r"[^A-Z0-9]", "", sheet_norm)
-    if "AUTOIMUNE" in sheet_compact:
-        return "Auto imune"
-
-    digits = re.findall(r"\d+", sheet_name)
-    if digits:
-        return normalize_consultorio_label(", ".join(digits))
-
-    cleaned = re.sub(r"[^A-Z0-9, ]+", "", sheet_norm).strip()
-    return normalize_consultorio_label(cleaned.title() if cleaned else None)
-
-def normalize_cols(df: pd.DataFrame):
-    df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    return df
-
-def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure column labels are unique by keeping the first occurrence.
-    This avoids pandas concat/groupby errors with duplicate column names.
-    """
-    if df is None or df.empty:
-        return df
-    # Keep first occurrence of duplicate columns
-    return df.loc[:, ~pd.Index(df.columns).duplicated()]
-
-def strip_accents(s: str) -> str:
-    import unicodedata
-    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-
-def canonical_day(label):
-    if label is None or (isinstance(label, float) and pd.isna(label)):
-        return None
-    label_norm = strip_accents(str(label)).upper()
-    for alias, canonical in DAY_ALIASES.items():
-        if alias in label_norm:
-            return canonical
-    return None
-
-def clean_text(s):
-    if pd.isna(s):
-        return None
-    s2 = str(s).strip()
-    return s2 if s2 else None
-
-def first_non_null(seq):
-    for x in seq:
-        if pd.notna(x):
-            return x
-    return None
-
-def try_number(x):
+def load_excel(file_like):
     try:
-        return float(str(x).replace(",", ".").strip())
-    except:
+        return pd.ExcelFile(file_like)
+    except Exception as e:
+        st.error(f"Não foi possível abrir o arquivo: {e}")
         return None
 
-# ---------------------------
-# Parsing
-# ---------------------------
-def parse_doctors(xls: pd.ExcelFile):
-    doctors_frames = []
-    for sheet in xls.sheet_names:
-        if sheet.upper().startswith(MED_PREFIX):
-            df = pd.read_excel(xls, sheet_name=sheet)
-            if df is None or len(df) == 0:
-                continue
-            df = normalize_cols(df)
-            # Remove duplicate columns before any renaming
-            df = dedupe_columns(df)
-            # Padroniza colunas principais se existirem
-            colmap = {}
-            for c in df.columns:
-                cl = strip_accents(c).upper()
-                if "NOME" == cl:
-                    colmap[c] = "NOME"
-                elif cl in ("CRM", "CRM "):
-                    colmap[c] = "CRM"
-                elif "ESPECIALIDADE" in cl:
-                    colmap[c] = "ESPECIALIDADE"
-                elif "CONSULTORIO" in cl:
-                    colmap[c] = "CONSULTORIO"
-                elif "CADASTRO" in cl:
-                    colmap[c] = "CADASTRO"
-                elif "PLANO" in cl or "CONVENIO" in cl:
-                    colmap[c] = "TIPO_PLANO"
-                elif "NEGOCIACAO" in cl or "NEGOCIA" in cl:
-                    colmap[c] = "NEGOCIACAO"
-            df = df.rename(columns=colmap)
-            # If renaming created duplicate standardized names, keep the first
-            df = dedupe_columns(df)
-            df["SHEET_ORIGEM"] = sheet
-            doctors_frames.append(df)
-    if doctors_frames:
-        doctors = pd.concat(doctors_frames, ignore_index=True)
-        # Tipos
-        if "TIPO_PLANO" not in doctors.columns:
-            doctors["TIPO_PLANO"] = np.nan  # se não existir na planilha
-        if "CONSULTORIO" in doctors.columns:
-            doctors["CONSULTORIO"] = doctors["CONSULTORIO"].apply(normalize_consultorio_label)
-        return doctors
-    return pd.DataFrame()
+excel = None
+if uploaded is not None:
+    excel = load_excel(uploaded)
+    fonte = "Upload do usuário"
+elif DEFAULT_PATH.exists():
+    excel = load_excel(DEFAULT_PATH)
+    fonte = f"Arquivo padrão: {DEFAULT_PATH.name}"
+else:
+    st.error("Nenhum arquivo encontrado. Envie um Excel com as abas de CONSULTÓRIO.")
+    st.stop()
 
-def parse_occupancy(xls: pd.ExcelFile, ignorar_keywords=None):
-    """Transforma as abas de ocupação em formato longo: uma linha por sala/dia/turno."""
-    if ignorar_keywords is None:
-        ignorar_keywords = IGNORAR_PALAVRAS_DEFAULT
-    ignorar_keywords = [
-        strip_accents(str(kw)).lower()
-        for kw in ignorar_keywords
-        if kw is not None and str(kw).strip()
-    ]
+st.sidebar.success(f"Usando dados de: {fonte}")
 
-    occ_rows = []
-    for sheet in xls.sheet_names:
-        if sheet.upper().startswith(OCC_PREFIX):
-            df_raw = pd.read_excel(xls, sheet_name=sheet, header=0)
-            if df_raw is None or len(df_raw) == 0:
-                continue
-            df = df_raw.copy()
-            df = normalize_cols(df)
+# ---------- Utilitários ----------
+def _normalize_col(col):
+    c = str(col).strip().lower()
+    c = (c
+         .replace("á","a").replace("ã","a").replace("â","a")
+         .replace("é","e").replace("ê","e")
+         .replace("í","i").replace("î","i")
+         .replace("ó","o").replace("õ","o").replace("ô","o")
+         .replace("ú","u").replace("ü","u")
+         .replace("ç","c"))
+    c = re.sub(r"\s+", " ", c)
+    return c
 
-            # Primeira linha costuma conter rótulos de turno (MANHÃ/TARDE) por coluna
-            # A primeira coluna geralmente é o identificador (SALA)
-            if df.shape[0] < 2 or df.shape[1] < 3:
-                continue
+def detect_header_and_parse(excel, sheet_name):
+    for header in [0,1,2,3,4]:
+        try:
+            df = excel.parse(sheet_name, header=header)
+        except Exception:
+            continue
+        df = df.dropna(how="all").dropna(axis=1, how="all")
+        if df.empty: 
+            continue
 
-            # Turnos por coluna (a linha 0 costuma ter os rótulos de turnos)
-            turnos_por_col = {}
-            for c in df.columns:
-                val = clean_text(df.iloc[0][c]) if 0 in df.index else None
-                if val:
-                    val_up = strip_accents(val).upper()
-                    if any(t in val_up for t in ["MANH", "TARD"]):
-                        if "MAN" in val_up:
-                            turnos_por_col[c] = "MANHÃ"
-                        elif "TARD" in val_up:
-                            turnos_por_col[c] = "TARDE"
-                        else:
-                            turnos_por_col[c] = None
-                    else:
-                        turnos_por_col[c] = None
-                else:
-                    turnos_por_col[c] = None
+        cols_norm = [_normalize_col(c) for c in df.columns]
+        col_dia = None; col_manha=None; col_tarde=None
 
-            # Dias por coluna: se um cabeçalho é "Unnamed", herda o último dia nomeado
-            dias_por_col = {}
-            last_day = None
-            for c in df.columns:
-                header = strip_accents(str(c)).upper()
-                # Algumas versões trazem "Unnamed: X" para TARDE; usamos o último dia nomeado
-                is_unnamed = header.startswith("UNNAMED")
-                if not is_unnamed:
-                    matched_day = canonical_day(header)
-                    if matched_day:
-                        last_day = matched_day
-                dias_por_col[c] = last_day
+        for i, cn in enumerate(cols_norm):
+            if col_dia is None:
+                if "dia" in cn or any(d in cn for d in ["segunda","terca","terça","quarta","quinta","sexta","sabado","sábado"]):
+                    col_dia = df.columns[i]
+            if any(k in cn for k in ["manha","manhã"]): col_manha = df.columns[i]
+            if "tarde" in cn: col_tarde = df.columns[i]
 
-            # Tenta descobrir a coluna da SALA (onde há "SALA x")
-            # Normalmente é a primeira coluna
-            col_sala = df.columns[0]
-            # Para cada linha (a partir da linha 1), processa
-            for idx in range(1, len(df)):
-                row = df.iloc[idx]
-                sala_raw = clean_text(row[col_sala])
-                if not sala_raw or "SALA" not in strip_accents(sala_raw).upper():
-                    # ignora linhas sem SALA
-                    continue
-                sala = sala_raw
-                sala_norm = strip_accents(sala).lower()
-                sala_ignorar = any(kw in sala_norm for kw in ignorar_keywords)
+        # fallback: primeira coluna contém dias
+        if col_dia is None and len(df.columns) >= 1:
+            first_col = df.columns[0]
+            sample = df[first_col].astype(str).str.lower()
+            if sample.str.contains("segunda|terca|terça|quarta|quinta|sexta|sabado|sábado").any():
+                col_dia = first_col
 
-                for c in df.columns[1:]:
-                    dia = dias_por_col.get(c)
-                    turno = turnos_por_col.get(c)
-                    if not dia or not turno:
-                        continue
-                    val = clean_text(row[c])
+        if col_dia is not None and (col_manha is not None or col_tarde is not None):
+            use_cols = [c for c in [col_dia, col_manha, col_tarde] if c is not None]
+            df = df[use_cols].copy()
+            rename = {col_dia:"Dia"}
+            if col_manha is not None: rename[col_manha]="Manhã"
+            if col_tarde is not None: rename[col_tarde]="Tarde"
+            df = df.rename(columns=rename)
+            df["Dia"] = df["Dia"].astype(str).str.strip()
+            df = df[df["Dia"].str.len()>0]
+            return df
+    return None
 
-                    # Classificar status
-                    status = "ignorar" if sala_ignorar else "disponível"
-                    medico_texto = None
-                    if not sala_ignorar and val:
-                        vlow = strip_accents(val).lower()
-                        if any(kw in vlow for kw in ignorar_keywords):
-                            status = "ignorar"
-                        else:
-                            status = "ocupado"
-                            medico_texto = val
-
-                    occ_rows.append({
-                        "SHEET_ORIGEM": sheet,
-                        "CONSULTORIO": extract_consultorio(sheet),
-                        "SALA": sala,
-                        "DIA": dia,
-                        "TURNO": turno,
-                        "STATUS": status,
-                        "MEDICO_RAW": medico_texto
-                    })
-    occ = pd.DataFrame(occ_rows)
-    # Limpa consultório (ex.: "1, 2" -> múltiplos). Se vier vazio, define como "1"
-    if not occ.empty:
-        occ["CONSULTORIO"] = occ["CONSULTORIO"].apply(normalize_consultorio_label)
-        occ["CONSULTORIO"] = occ["CONSULTORIO"].replace("", np.nan)
-        occ["CONSULTORIO"] = occ["CONSULTORIO"].fillna("1")
-    return occ
-
-def parse_productivity(xls: pd.ExcelFile):
+def tidy_from_sheets(excel):
     frames = []
-    for sheet in xls.sheet_names:
-        if sheet.upper().startswith(PROD_PREFIX):
-            df = pd.read_excel(xls, sheet_name=sheet)
-            if df is None or len(df) == 0:
+    for sheet in excel.sheet_names:
+        s_norm = _normalize_col(sheet)
+        if ("consult" in s_norm) and ("ocupa" not in s_norm):
+            df = detect_header_and_parse(excel, sheet)
+            if df is None or df.empty:
                 continue
-            df = normalize_cols(df)
-            df["SHEET_ORIGEM"] = sheet
+            df["Dia"] = (df["Dia"].astype(str).str.strip()
+                         .str.replace("terca","terça", case=False)
+                         .str.replace("sabado","sábado", case=False)
+                         .str.capitalize())
+            df.insert(0, "Sala", sheet.strip())
+            long = df.melt(id_vars=["Sala","Dia"], value_vars=[c for c in ["Manhã","Tarde"] if c in df.columns],
+                           var_name="Turno", value_name="Médico")
+            long["Médico"] = long["Médico"].astype(str).replace({"nan":"","None":""}).str.strip()
+            frames.append(long)
+    if not frames:
+        return pd.DataFrame(columns=["Sala","Dia","Turno","Médico"])
+    full = pd.concat(frames, ignore_index=True)
+    full["Dia"] = pd.Categorical(full["Dia"], categories=["Segunda","Terça","Quarta","Quinta","Sexta","Sábado"], ordered=True)
+    full["Ocupado"] = full["Médico"].str.len() > 0
+    return full
 
-            # Identifica colunas de interesse por palavras-chave
-            col_consulta = [c for c in df.columns if "CONSULT" in strip_accents(c).upper()]
-            col_exame = [c for c in df.columns if "EXAME" in strip_accents(c).upper()]
-            col_cirur = [c for c in df.columns if "CIRUR" in strip_accents(c).upper() or "CIRURG" in strip_accents(c).upper()]
-
-            # Tenta identificar consultórios citados na planilha
-            df_long = df.copy()
-            # Mantém apenas numéricos nas colunas alvo quando possível
-            for cc in col_consulta + col_exame + col_cirur:
-                df_long[cc] = pd.to_numeric(df_long[cc], errors="coerce")
-
-            # Agrega por sheet (se não houver chaves explícitas)
-            agg = {}
-            if col_consulta: agg["CONSULTAS"] = df_long[col_consulta].sum(axis=1)
-            else: agg["CONSULTAS"] = 0
-            if col_exame: agg["EXAMES"] = df_long[col_exame].sum(axis=1)
-            else: agg["EXAMES"] = 0
-            if col_cirur: agg["CIRURGIAS"] = df_long[col_cirur].sum(axis=1)
-            else: agg["CIRURGIAS"] = 0
-            df_out = pd.DataFrame(agg)
-            df_out["SHEET_ORIGEM"] = sheet
-            frames.append(df_out)
-
-    if frames:
-        prod = pd.concat(frames, ignore_index=True)
-        # Total geral por sheet (como fallback)
-        prod = prod.groupby("SHEET_ORIGEM", as_index=False)[["CONSULTAS","EXAMES","CIRURGIAS"]].sum()
-        return prod
-    return pd.DataFrame(columns=["SHEET_ORIGEM","CONSULTAS","EXAMES","CIRURGIAS"])
-
-# ---------------------------
-# App main
-# ---------------------------
-if uploaded is None:
-    st.info("Envie o arquivo Excel para começar.")
+df = tidy_from_sheets(excel)
+if df.empty:
+    st.error("Não foram encontrados dados nas abas 'CONSULTÓRIO'.")
     st.stop()
 
-try:
-    xls = pd.ExcelFile(uploaded)
-except Exception as e:
-    st.error(f"Não foi possível abrir o arquivo: {e}")
-    st.stop()
+# ---------- Filtros ----------
+st.sidebar.header("🔎 Filtros")
+salas = sorted(df["Sala"].dropna().unique().tolist())
+dias = [d for d in ["Segunda","Terça","Quarta","Quinta","Sexta","Sábado"] if d in df["Dia"].astype(str).unique()]
+turnos = sorted(df["Turno"].dropna().unique().tolist())
+medicos = sorted([m for m in df["Médico"].dropna().unique().tolist() if m])
 
-# Parâmetros avançados
-with st.expander("⚙️ Opções avançadas de parsing"):
-    ignorar_kw = st.text_input(
-        "Palavras-chave para marcar horários/salas a **ignorar** na taxa de ocupação (separadas por vírgula).",
-        value=", ".join(IGNORAR_PALAVRAS_DEFAULT)
-    )
-    ignorar_keywords = [w.strip().lower() for w in ignorar_kw.split(",") if w.strip()]
+sel_salas = st.sidebar.multiselect("Consultório(s)", salas, default=salas)
+sel_dias = st.sidebar.multiselect("Dia(s)", dias, default=dias)
+sel_turnos = st.sidebar.multiselect("Turno(s)", turnos, default=turnos)
+sel_medicos = st.sidebar.multiselect("Médico(s)", medicos, default=[], help="Deixe vazio para não filtrar por médico.")
 
-# Parse
-doctors = parse_doctors(xls)
-occ = parse_occupancy(xls, ignorar_keywords=ignorar_keywords)
-prod = parse_productivity(xls)
+# Base para KPIs (NÃO filtra por médico)
+mask_base = (df["Sala"].isin(sel_salas) & df["Dia"].astype(str).isin(sel_dias) & df["Turno"].isin(sel_turnos))
+fdf_base = df[mask_base].copy()
 
-# Mostra status de ingestão
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.metric("Abas de Médicos", f"{sum(1 for s in xls.sheet_names if s.upper().startswith(MED_PREFIX))}")
-with c2:
-    st.metric("Abas de Ocupação", f"{sum(1 for s in xls.sheet_names if s.upper().startswith(OCC_PREFIX))}")
-with c3:
-    st.metric("Abas de Produtividade", f"{sum(1 for s in xls.sheet_names if s.upper().startswith(PROD_PREFIX))}")
+# Aplicar filtro de médico apenas onde fizer sentido
+mask_medico = df["Médico"].isin(sel_medicos) if sel_medicos else True
+fdf = df[mask_base & mask_medico].copy()
 
-st.divider()
+# ---------- KPIs ----------
+total_salas = len(set(sel_salas))
+total_slots = len(fdf_base)
+ocupados = int(fdf_base["Ocupado"].sum())
+tx_ocup = (ocupados / total_slots * 100) if total_slots > 0 else 0
+slots_livres = max(total_slots - ocupados, 0)
+medicos_distintos = fdf_base.loc[fdf_base["Ocupado"], "Médico"].nunique()
 
-# ---------------------------
-# Filtros globais
-# ---------------------------
-st.sidebar.header("Aparência")
-theme_label = st.sidebar.radio(
-    "Tema do dashboard",
-    list(THEME_OPTIONS.keys()),
-    index=list(THEME_OPTIONS.values()).index(st.session_state["theme_base"]),
-)
-selected_theme = THEME_OPTIONS[theme_label]
-if selected_theme != st.session_state["theme_base"]:
-    st.session_state["theme_base"] = selected_theme
-    apply_theme(selected_theme)
-    st.rerun()
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Consultórios selecionados", total_salas)
+c2.metric("Slots (dia x turno x sala)", total_slots)
+c3.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
+c4.metric("Ocupados", ocupados)
 
-st.sidebar.divider()
-st.sidebar.header("Filtros")
-consultorios_disp = sorted(set((occ["CONSULTORIO"].dropna().unique().tolist() if not occ.empty else []) +
-                               (doctors["CONSULTORIO"].dropna().unique().tolist() if "CONSULTORIO" in doctors.columns else [])))
-consultorio_sel = st.sidebar.multiselect("Consultório", consultorios_disp, default=consultorios_disp)
+kc1, kc2, kc3 = st.columns(3)
+kc1.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
+kc2.metric("Slots livres", slots_livres)
+kc3.metric("Médicos distintos (no filtro de sala/dia/turno)", medicos_distintos)
 
-especialidades_disp = sorted(doctors["ESPECIALIDADE"].dropna().unique().tolist()) if "ESPECIALIDADE" in doctors.columns else []
-especialidade_sel = st.sidebar.multiselect("Especialidade", especialidades_disp, default=especialidades_disp)
+# ---------- Gráficos de ocupação (sem heatmap) com porcentagens nas barras ----------
+colA, colB = st.columns(2)
+with colA:
+    by_sala = fdf_base.groupby("Sala")["Ocupado"].mean().reset_index()
+    by_sala["Taxa de Ocupação (%)"] = (by_sala["Ocupado"]*100).round(1)
+    fig1 = px.bar(by_sala, x="Sala", y="Taxa de Ocupação (%)", title="Ocupação por Consultório (%)", text="Taxa de Ocupação (%)")
+    fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig1.update_yaxes(range=[0,100])
+    st.plotly_chart(fig1, use_container_width=True)
 
-tipos_plano_disp = sorted(doctors["TIPO_PLANO"].dropna().astype(str).unique().tolist()) if "TIPO_PLANO" in doctors.columns else []
-tipo_plano_sel = st.sidebar.multiselect("Tipo de plano", tipos_plano_disp, default=tipos_plano_disp)
+with colB:
+    by_dia = fdf_base.groupby("Dia")["Ocupado"].mean().reset_index()
+    by_dia["Taxa de Ocupação (%)"] = (by_dia["Ocupado"]*100).round(1)
+    fig2 = px.bar(by_dia, x="Dia", y="Taxa de Ocupação (%)", title="Ocupação por Dia da Semana (%)", text="Taxa de Ocupação (%)")
+    fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig2.update_yaxes(range=[0,100])
+    st.plotly_chart(fig2, use_container_width=True)
 
-# Aplicação de filtros nos datasets
-occ_f = occ.copy()
-if consultorio_sel and not occ_f.empty:
-    occ_f = occ_f[occ_f["CONSULTORIO"].isin(consultorio_sel)]
+colC, colD = st.columns(2)
+with colC:
+    by_turno = fdf_base.groupby("Turno")["Ocupado"].mean().reset_index()
+    by_turno["Taxa de Ocupação (%)"] = (by_turno["Ocupado"]*100).round(1)
+    fig3 = px.bar(by_turno, x="Turno", y="Taxa de Ocupação (%)", title="Ocupação por Turno (%)", text="Taxa de Ocupação (%)")
+    fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig3.update_yaxes(range=[0,100])
+    st.plotly_chart(fig3, use_container_width=True)
 
-doctors_f = doctors.copy()
-if "CONSULTORIO" in doctors_f.columns and consultorio_sel:
-    doctors_f = doctors_f[doctors_f["CONSULTORIO"].astype(str).isin(consultorio_sel)]
-if "ESPECIALIDADE" in doctors_f.columns and especialidade_sel:
-    doctors_f = doctors_f[doctors_f["ESPECIALIDADE"].isin(especialidade_sel)]
-if "TIPO_PLANO" in doctors_f.columns and tipo_plano_sel:
-    doctors_f = doctors_f[doctors_f["TIPO_PLANO"].astype(str).isin(tipo_plano_sel)]
-
-# ---------------------------
-# KPIs topo (Visão Geral)
-# ---------------------------
-st.subheader("📊 Visão Geral")
-
-# Taxa de ocupação
-if not occ_f.empty:
-    total_slots = len(occ_f[occ_f["STATUS"] != "ignorar"])
-    ocupados = len(occ_f[occ_f["STATUS"] == "ocupado"])
-    disponiveis = len(occ_f[occ_f["STATUS"] == "disponível"])
-    taxa = (ocupados / total_slots * 100) if total_slots else 0.0
-else:
-    taxa, total_slots, ocupados, disponiveis = 0.0, 0, 0, 0
-
-# Médicos
-total_medicos = doctors_f["CRM"].nunique() if "CRM" in doctors_f.columns else doctors_f.shape[0]
-pct_parceiros = 0.0
-pct_nao_estrateg = 0.0
-if "TIPO_PLANO" in doctors_f.columns and doctors_f.shape[0] > 0:
-    parceiros = doctors_f["TIPO_PLANO"].astype(str).str.upper().str.contains("JAYME|MISTO", regex=True, na=False).sum()
-    nao_estr = doctors_f["TIPO_PLANO"].astype(str).str.upper().str.contains("PROPRIO|PRÓPRIO", regex=True, na=False).sum()
-    pct_parceiros = parceiros / max(1, doctors_f.shape[0]) * 100
-    pct_nao_estrateg = nao_estr / max(1, doctors_f.shape[0]) * 100
-
-# Produtividade
-if not prod.empty:
-    prod_tot = prod[["CONSULTAS","EXAMES","CIRURGIAS"]].sum()
-    total_consultas, total_exames, total_cirurgias = int(prod_tot.get("CONSULTAS",0)), int(prod_tot.get("EXAMES",0)), int(prod_tot.get("CIRURGIAS",0))
-else:
-    total_consultas = total_exames = total_cirurgias = 0
-
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Taxa de ocupação", f"{taxa:.1f}%")
-k2.metric("Slots ocupados", f"{ocupados}/{total_slots}")
-k3.metric("Médicos (únicos)", f"{int(total_medicos)}")
-k4.metric("% Médicos parceiros (Jayme/Misto)", f"{pct_parceiros:.0f}%")
-k5.metric("Consultas / Exames / Cirurgias", f"{total_consultas} / {total_exames} / {total_cirurgias}")
-
-st.divider()
-
-# ---------------------------
-# Seção 1: Ocupação das Salas
-# ---------------------------
-st.header("📅 Ocupação das Salas")
-
-if occ_f.empty:
-    st.warning("Não foi possível identificar dados de **Ocupação** nas abas enviadas.")
-else:
-    occ_valid = occ_f[occ_f["STATUS"] != "ignorar"].copy()
-    if occ_valid.empty:
-        st.info("Todos os registros de ocupação foram marcados como 'ignorar'.")
+with colD:
+    top_med = (fdf[fdf["Ocupado"]]
+               .groupby("Médico")
+               .size()
+               .reset_index(name="Turnos Utilizados")
+               .sort_values("Turnos Utilizados", ascending=False)
+               .head(15))
+    if not top_med.empty:
+        fig4 = px.bar(top_med, x="Turnos Utilizados", y="Médico", orientation="h", title="Top Médicos por Nº de Turnos", text="Turnos Utilizados")
+        fig4.update_traces(textposition="outside")
+        st.plotly_chart(fig4, use_container_width=True)
     else:
-        occ_valid["OCUPADO"] = (
-            occ_valid["STATUS"].astype(str).str.lower().eq("ocupado").astype(float)
-        )
-        occ_valid["CONSULTORIO"] = occ_valid["CONSULTORIO"].fillna("1").astype(str)
+        st.info("Sem médicos ocupando slots nos filtros atuais.")
 
-        def sort_dia(dia):
-            if pd.isna(dia):
-                return len(DAY_ORDER)
-            canonical = canonical_day(dia)
-            if canonical:
-                return DAY_INDEX.get(canonical, len(DAY_ORDER))
-            return len(DAY_ORDER)
-
-        def sort_consultorio(label):
-            num = try_number(label)
-            if num is None:
-                return (1, str(label))
-            return (0, num)
-
-        consultorios_presentes = sorted(
-            occ_valid["CONSULTORIO"].dropna().unique().tolist(),
-            key=sort_consultorio,
-        )
-
-        if not consultorios_presentes:
-            st.info("Não foi possível determinar os consultórios nas abas de ocupação.")
-
-        for consultorio in consultorios_presentes:
-            occ_cons = occ_valid[occ_valid["CONSULTORIO"] == consultorio]
-            if occ_cons.empty:
-                continue
-
-            st.subheader(f"Consultório {consultorio}")
-
-            dias_presentes = sorted(occ_cons["DIA"].dropna().unique(), key=sort_dia)
-
-            if dias_presentes:
-                st.markdown("**Visão diária (sala x turno)**")
-                tabs = st.tabs([str(dia).title() for dia in dias_presentes])
-                for tab, dia in zip(tabs, dias_presentes):
-                    with tab:
-                        df_dia = occ_cons[occ_cons["DIA"] == dia]
-                        df_slots = (
-                            df_dia.groupby(["SALA", "TURNO"], as_index=False)
-                            .agg(
-                                {
-                                    "STATUS": lambda vals: first_non_null(vals),
-                                    "MEDICO_RAW": lambda vals: first_non_null(vals),
-                                }
-                            )
-                        )
-
-                        if df_slots.empty:
-                            st.info("Sem dados suficientes para este dia.")
-                        else:
-                            def build_display(row):
-                                status = str(row["STATUS"]).lower()
-                                if status == "ocupado":
-                                    medico = row.get("MEDICO_RAW")
-                                    if pd.isna(medico):
-                                        return "Ocupado"
-                                    text = str(medico).strip()
-                                    return text if text else "Ocupado"
-                                # Slots livres ficam sem texto, apenas com destaque visual
-                                return ""
-
-                            df_slots["DISPLAY"] = df_slots.apply(build_display, axis=1)
-
-                            salas_order = (
-                                df_slots["SALA"]
-                                .drop_duplicates()
-                                .tolist()
-                            )
-                            display_table = (
-                                df_slots.pivot(index="SALA", columns="TURNO", values="DISPLAY")
-                                .reindex(index=salas_order)
-                            )
-                            display_table = display_table.reindex(columns=TURNS, fill_value="")
-
-                            status_table = (
-                                df_slots.pivot(index="SALA", columns="TURNO", values="STATUS")
-                                .reindex(index=salas_order)
-                            )
-                            status_table = status_table.reindex(columns=TURNS)
-
-                            def highlight_free(row):
-                                statuses = status_table.loc[row.name]
-                                styles = []
-                                for col in row.index:
-                                    if (
-                                        isinstance(statuses.get(col), str)
-                                        and statuses.get(col).lower() == "disponível"
-                                    ):
-                                        styles.append(
-                                            "background-color: #d4edda; color: #155724; font-weight: 600;"
-                                        )
-                                    else:
-                                        styles.append("")
-                                return styles
-
-                            styled = display_table.fillna("").style.apply(highlight_free, axis=1)
-
-                            st.dataframe(
-                                styled,
-                                use_container_width=True,
-                            )
-                            st.caption(
-                                "Nome do médico responsável por sala e turno; células livres destacadas em verde."
-                            )
-
-            df_bar_cons = (
-                occ_cons.groupby(["SALA"], as_index=False)["OCUPADO"].mean()
-                .rename(columns={"OCUPADO": "OCUPACAO_%"})
-            )
-            df_bar_cons["OCUPACAO_%"] = df_bar_cons["OCUPACAO_%"] * 100
-            df_bar_cons = df_bar_cons.sort_values("OCUPACAO_%", ascending=False)
-            if not df_bar_cons.empty:
-                fig2 = px.bar(
-                    df_bar_cons,
-                    x="OCUPACAO_%",
-                    y="SALA",
-                    orientation="h",
-                    title=f"Taxa média de ocupação por sala (%) — Consultório {consultorio}",
-                )
-                fig2.update_traces(texttemplate="%{x:.1f}%", textposition="inside")
-                fig2.update_layout(height=450, margin=dict(l=20, r=20, t=50, b=20))
-                st.plotly_chart(fig2, use_container_width=True)
-
-    # Stacked status por consultório
-    status_labels = {"disponível": "Disponível", "ocupado": "Ocupado"}
-    df_stack = (
-        occ_f[occ_f["STATUS"].isin(status_labels)]
-        .assign(STATUS2=lambda df: df["STATUS"].map(status_labels))
-        .groupby(["CONSULTORIO", "STATUS2"], as_index=False)
-        .size()
-    )
-    if not df_stack.empty:
-        fig3 = px.bar(
-            df_stack,
-            x="CONSULTORIO",
-            y="size",
-            color="STATUS2",
-            title="Distribuição de status por consultório",
-            barmode="stack",
-        )
-        st.plotly_chart(fig3, use_container_width=True)
-
-    with st.expander("🔎 Tabela detalhada (Ocupação)"):
-        st.dataframe(occ_f, use_container_width=True, height=350)
-
-st.divider()
-
-# ---------------------------
-# Seção 2: Médicos e Especialidades
-# ---------------------------
-st.header("👩‍⚕️ Médicos e Especialidades")
-
-if doctors_f.empty:
-    st.warning("Não foi possível identificar dados de **Médicos** nas abas enviadas.")
-else:
-    col_a, col_b = st.columns(2)
-
-    # Distribuição de médicos por especialidade
-    if "ESPECIALIDADE" in doctors_f.columns:
-        dist_esp = doctors_f.groupby("ESPECIALIDADE", as_index=False).size().sort_values("size", ascending=False)
-        with col_a:
-            fig4 = px.treemap(dist_esp, path=["ESPECIALIDADE"], values="size", title="Distribuição por especialidade")
-            st.plotly_chart(fig4, use_container_width=True)
-
-    # Distribuição por tipo de plano
-    if "TIPO_PLANO" in doctors_f.columns:
-        dist_plano = doctors_f["TIPO_PLANO"].fillna("Não informado").value_counts().reset_index()
-        dist_plano.columns = ["TIPO_PLANO", "QTD"]
-        with col_b:
-            fig5 = px.pie(dist_plano, names="TIPO_PLANO", values="QTD", title="Tipos de plano (convênio)")
-            st.plotly_chart(fig5, use_container_width=True)
-
-    # Ranking médicos por produtividade (se existir prod detalhado no futuro)
-    # Como fallback, mostramos contagem por consultório/origem
-    if "CONSULTORIO" in doctors_f.columns:
-        dist_cons = doctors_f["CONSULTORIO"].astype(str).value_counts().reset_index()
-        dist_cons.columns = ["CONSULTORIO", "QTD_MEDICOS"]
-        fig6 = px.bar(dist_cons, x="CONSULTORIO", y="QTD_MEDICOS", title="Médicos por consultório")
+# ---------- Rankings de Ociosidade ----------
+st.subheader("🕳️ Rankings de Ociosidade")
+oc1, oc2 = st.columns(2)
+with oc1:
+    if not by_dia.empty:
+        by_dia_oc = by_dia.copy()
+        by_dia_oc["Ociosidade (%)"] = (100 - by_dia_oc["Taxa de Ocupação (%)"]).clip(0,100)
+        by_dia_oc = by_dia_oc.sort_values("Ociosidade (%)", ascending=False)
+        fig5 = px.bar(by_dia_oc, x="Dia", y="Ociosidade (%)", title="Ociosidade por Dia (%)", text="Ociosidade (%)")
+        fig5.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig5.update_yaxes(range=[0,100])
+        st.plotly_chart(fig5, use_container_width=True)
+    else:
+        st.info("Sem dados de dia para calcular ociosidade.")
+with oc2:
+    if not by_turno.empty:
+        by_turno_oc = by_turno.copy()
+        by_turno_oc["Ociosidade (%)"] = (100 - by_turno_oc["Taxa de Ocupação (%)"]).clip(0,100)
+        by_turno_oc = by_turno_oc.sort_values("Ociosidade (%)", ascending=False)
+        fig6 = px.bar(by_turno_oc, x="Turno", y="Ociosidade (%)", title="Ociosidade por Turno (%)", text="Ociosidade (%)")
+        fig6.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig6.update_yaxes(range=[0,100])
         st.plotly_chart(fig6, use_container_width=True)
+    else:
+        st.info("Sem dados de turno para calcular ociosidade.")
 
-    # Tabela com sinalizadores
-    df_tab = doctors_f.copy()
-    if "TIPO_PLANO" in df_tab.columns:
-        tipo_up = df_tab["TIPO_PLANO"].astype(str).str.upper()
-        df_tab["SINAL"] = np.where(tipo_up.str.contains("PROPRIO|PRÓPRIO", regex=True, na=False), "🔴 Não estratégico",
-                            np.where(tipo_up.str.contains("JAYME|MISTO", regex=True, na=False), "🟢 Parceiro", "🟡 Neutro"))
-    with st.expander("📋 Tabela de médicos (com sinalizadores)"):
-        st.dataframe(df_tab, use_container_width=True, height=360)
+# ---------- Cadastro de Médicos (integração literal) ----------
+st.sidebar.header("👨‍⚕️ Cadastro de Médicos (opcional)")
+med_upload = st.sidebar.file_uploader("Enviar cadastro (xlsx) com aba 'Médicos' (ou similar)", type=["xlsx"], key="medicos_upl")
 
-st.divider()
+def _find_medicos_sheet(xls: pd.ExcelFile):
+    for s in xls.sheet_names:
+        if "medic" in _normalize_col(s):  # medico / médicos
+            return s
+    return None
 
-# ---------------------------
-# Seção 3: Produtividade e Planos
-# ---------------------------
-st.header("📈 Produtividade")
+def _to_number(x):
+    import numpy as np, re as _re
+    if pd.isna(x):
+        return np.nan
+    txt = str(x)
+    txt = _re.sub(r"[^\d,.-]", "", txt)
+    if "," in txt and "." in txt:
+        txt = txt.replace(".", "").replace(",", ".")
+    elif "," in txt and "." not in txt:
+        txt = txt.replace(",", ".")
+    try:
+        return float(txt)
+    except:
+        return pd.NA
 
-if prod.empty:
-    st.info("Não identifiquei abas de PRODUTIVIDADE. Quando existirem, este painel mostrará comparativos.")
+med_df = None
+if med_upload is not None:
+    try:
+        med_xls = pd.ExcelFile(med_upload)
+        sh = _find_medicos_sheet(med_xls) or med_xls.sheet_names[0]
+        med_df = med_xls.parse(sh, header=0)
+    except Exception as e:
+        st.warning(f"Não foi possível ler o cadastro enviado: {e}")
+
+if med_df is None:
+    try:
+        sh = _find_medicos_sheet(excel)
+        if sh:
+            med_df = excel.parse(sh, header=0)
+    except Exception:
+        pass
+
+if med_df is not None and not med_df.empty:
+    m = med_df.copy()
+    # normaliza headers e renomeia conforme seu layout
+    norm = {_c:_normalize_col(_c) for _c in m.columns}
+    m.columns = [norm[c] for c in m.columns]
+
+    rename = {}
+    for c in m.columns:
+        if "nome" in c or "medico" in c: rename[c]="Médico"
+        if c=="crm" or "crm" in c: rename[c]="CRM"
+        if "especial" in c: rename[c]="Especialidade"
+        if "planos" in c or c=="plano": rename[c]="Planos"
+        if "valor" in c or "aluguel" in c or "negoci" in c: rename[c]="Valor Aluguel"
+        if "exclus" in c: rename[c]="Sala Exclusiva"
+        if "divid" in c: rename[c]="Sala Dividida"
+    m = m.rename(columns=rename)
+
+    keep = [c for c in ["Médico","CRM","Especialidade","Planos","Sala Exclusiva","Sala Dividida","Valor Aluguel"] if c in m.columns]
+    m = m[keep].copy()
+
+    if "Médico" in m.columns: m["Médico"] = m["Médico"].astype(str).str.strip()
+    if "Planos" in m.columns: m["Planos"] = m["Planos"].astype(str).str.strip()
+    if "Valor Aluguel" in m.columns: m["Valor Aluguel"] = m["Valor Aluguel"].apply(_to_number)
+    for c in ["Sala Exclusiva","Sala Dividida"]:
+        if c in m.columns:
+            m[c] = m[c].astype(str).str.strip().str.upper().replace({"X":"Sim","":""})
+
+    # Enriquecer com turnos utilizados (pelos nomes da escala)
+    usos = fdf_base.groupby("Médico").size().reset_index(name="Turnos Utilizados")
+    med_enriched = m.merge(usos, on="Médico", how="left")
+
+    st.markdown("---")
+    st.subheader("💼 Indicador: PLANOS (texto literal) × Aluguel × Profissionais")
+
+    # KPIs deste bloco
+    tot_prof = med_enriched["Médico"].nunique()
+    categorias_planos = med_enriched["Planos"].nunique() if "Planos" in med_enriched.columns else 0
+    cpa, cpb, cpc = st.columns(3)
+    cpa.metric("Profissionais (total)", tot_prof)
+    cpb.metric("Categorias em PLANOS", categorias_planos)
+    if "Valor Aluguel" in med_enriched.columns:
+        media_valor = med_enriched["Valor Aluguel"].dropna().mean()
+        cpc.metric("Valor médio de aluguel (R$)", f"{media_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X","."))
+    else:
+        cpc.metric("Valor médio de aluguel (R$)", "—")
+
+    g1, g2 = st.columns(2)
+    with g1:
+        if "Planos" in med_enriched.columns:
+            cont = med_enriched.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
+            fig7 = px.bar(cont, x="Planos", y="Profissionais", title="Profissionais por PLANOS", text="Profissionais")
+            fig7.update_traces(textposition="outside")
+            st.plotly_chart(fig7, use_container_width=True)
+        else:
+            st.info("Coluna PLANOS não encontrada.")
+
+    with g2:
+        if "Valor Aluguel" in med_enriched.columns and "Planos" in med_enriched.columns:
+            avgv = med_enriched.groupby("Planos")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)")
+            avgv["Valor médio (R$)"] = avgv["Valor médio (R$)"].round(2)
+            fig8 = px.bar(avgv, x="Planos", y="Valor médio (R$)", title="Valor médio de aluguel por PLANOS", text="Valor médio (R$)")
+            fig8.update_traces(texttemplate="R$ %{y:.2f}", textposition="outside")
+            st.plotly_chart(fig8, use_container_width=True)
+        else:
+            st.info("Inclua as colunas PLANOS e Valor Aluguel.")
+
+    if "Valor Aluguel" in med_enriched.columns:
+        st.markdown("##### Distribuição de profissionais por faixa de aluguel × PLANOS")
+        bins = [0,500,1000,1500,2000,3000,9999999]
+        labels = ["até 500","501–1000","1001–1500","1501–2000","2001–3000","3000+"]
+        med_enriched["Faixa Aluguel"] = pd.cut(med_enriched["Valor Aluguel"], bins=bins, labels=labels, include_lowest=True)
+        dist = med_enriched.groupby(["Planos","Faixa Aluguel"])["Médico"].nunique().reset_index(name="Profissionais")
+        fig9 = px.bar(dist, x="Faixa Aluguel", y="Profissionais", color="Planos", barmode="group",
+                      title="Profissionais por faixa de aluguel × PLANOS", text="Profissionais")
+        fig9.update_traces(textposition="outside")
+        st.plotly_chart(fig9, use_container_width=True)
+
+    g3, g4 = st.columns(2)
+    with g3:
+        if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
+            esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
+            fig10 = px.bar(esp_avg, x="Valor médio (R$)", y="Especialidade", orientation="h", title="Valor médio de aluguel por especialidade", text="Valor médio (R$)")
+            fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
+            st.plotly_chart(fig10, use_container_width=True)
+        else:
+            st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
+    with g4:
+        if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
+            plano_esp = med_enriched.groupby(["Especialidade","Planos"])["Médico"].nunique().reset_index(name="Profissionais")
+            fig11 = px.bar(plano_esp, x="Especialidade", y="Profissionais", color="Planos", barmode="group",
+                           title="Profissionais por especialidade × PLANOS", text="Profissionais")
+            fig11.update_traces(textposition="outside")
+            st.plotly_chart(fig11, use_container_width=True)
+        else:
+            st.info("Inclua 'Especialidade' e 'PLANOS'.")
+
+    g5, g6 = st.columns(2)
+    with g5:
+        if "Sala Exclusiva" in med_enriched.columns or "Sala Dividida" in med_enriched.columns:
+            ts = med_enriched.copy()
+            ts["Tipo de Sala"] = None
+            if "Sala Exclusiva" in ts.columns:
+                ts.loc[ts["Sala Exclusiva"].eq("Sim"), "Tipo de Sala"] = "Exclusiva"
+            if "Sala Dividida" in ts.columns:
+                ts.loc[ts["Sala Dividida"].eq("Sim"), "Tipo de Sala"] = ts["Tipo de Sala"].fillna("Dividida")
+            ts = ts.dropna(subset=["Tipo de Sala"])
+            if not ts.empty:
+                dist_ts = ts.groupby("Tipo de Sala")["Médico"].nunique().reset_index(name="Profissionais")
+                fig12 = px.bar(dist_ts, x="Tipo de Sala", y="Profissionais", title="Profissionais por tipo de sala", text="Profissionais")
+                fig12.update_traces(textposition="outside")
+                st.plotly_chart(fig12, use_container_width=True)
+            else:
+                st.info("Sem marcações de sala exclusiva/dividida para analisar.")
+        else:
+            st.info("Inclua colunas 'Sala Exclusiva' e/ou 'Sala Dividida'.")
+
+    st.markdown("##### Tabela (Médico × CRM × Especialidade × PLANOS × Valor × Tipo de Sala × Turnos)")
+    cols_show = [c for c in ["Médico","CRM","Especialidade","Planos","Valor Aluguel","Sala Exclusiva","Sala Dividida","Turnos Utilizados"] if c in med_enriched.columns]
+    st.dataframe(med_enriched[cols_show].sort_values(["Planos","Especialidade","Valor Aluguel","Médico"], na_position="last"), use_container_width=True)
+
 else:
-    cpa, cpb = st.columns(2)
-    with cpa:
-        fig7 = px.bar(prod.melt(id_vars="SHEET_ORIGEM", value_vars=["CONSULTAS","EXAMES","CIRURGIAS"],
-                                var_name="Tipo", value_name="Quantidade"),
-                      x="SHEET_ORIGEM", y="Quantidade", color="Tipo", barmode="group",
-                      title="Consultas, Exames e Cirurgias por aba de produtividade")
-        st.plotly_chart(fig7, use_container_width=True)
-    with cpb:
-        tot = prod[["CONSULTAS","EXAMES","CIRURGIAS"]].sum().reset_index()
-        tot.columns = ["Tipo","Total"]
-        fig8 = px.pie(tot, names="Tipo", values="Total", title="Participação por tipo")
-        st.plotly_chart(fig8, use_container_width=True)
+    st.info("Opcional: Inclua a aba **Médicos** no arquivo (ou faça upload separado) com colunas NOME/CRM/ESPECIALIDADE/PLANOS/SALA EXCLUSIVA/SALA DIVIDIDO/VALOR ALUGUEL.")
 
-    # Placeholder para scatter Negociação x Produtividade (se a planilha de médicos tiver NEGOCIAÇÃO + quando houver produtividade por médico)
-    if "NEGOCIACAO" in doctors_f.columns:
-        # Sem produtividade por médico, usamos proxy de 1 para desenhar e não quebrar — o usuário poderá evoluir este bloco quando houver dados.
-        tmp = doctors_f.copy()
-        tmp["NEGOCIACAO_NUM"] = pd.to_numeric(tmp["NEGOCIACAO"], errors="coerce")
-        tmp = tmp.dropna(subset=["NEGOCIACAO_NUM"])
-        if not tmp.empty:
-            tmp["PRODUTIVIDADE_PROXY"] = 1  # placeholder
-            fig_sc = px.scatter(tmp, x="NEGOCIACAO_NUM", y="PRODUTIVIDADE_PROXY",
-                                hover_data=["NOME","ESPECIALIDADE","TIPO_PLANO"],
-                                title="Negociação (R$) × Produtividade (proxy) — ajuste quando tiver dados por médico")
-            st.plotly_chart(fig_sc, use_container_width=True)
-
-st.caption("💡 Dica: ajuste as palavras-chave de *ignorar* na seção de Opções Avançadas para excluir salas/slots alugados da taxa de ocupação.")
+# ---------- Detalhamento ----------
+st.subheader("📋 Agenda Detalhada (Tabela)")
+st.dataframe(
+    fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
+    use_container_width=True
+)
+csv = fdf.to_csv(index=False).encode("utf-8-sig")
+st.download_button("⬇️ Baixar dados filtrados (CSV)", data=csv, file_name="agenda_filtrada.csv", mime="text/csv")
