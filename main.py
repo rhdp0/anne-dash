@@ -143,7 +143,10 @@ mask_base = (df["Sala"].isin(sel_salas) & df["Dia"].astype(str).isin(sel_dias) &
 fdf_base = df[mask_base].copy()
 
 # Aplicar filtro de médico apenas onde fizer sentido
-mask_medico = df["Médico"].isin(sel_medicos) if sel_medicos else True
+if sel_medicos:
+    mask_medico = df["Médico"].isin(sel_medicos)
+else:
+    mask_medico = pd.Series(True, index=df.index)
 fdf = df[mask_base & mask_medico].copy()
 
 # ---------- KPIs ----------
@@ -204,6 +207,76 @@ with colD:
         st.plotly_chart(fig4, use_container_width=True)
     else:
         st.info("Sem médicos ocupando slots nos filtros atuais.")
+
+# ---------- Visão individual por consultório ----------
+st.markdown("---")
+st.subheader("🔍 Indicadores individuais por consultório")
+
+salas_disponiveis = sorted(df["Sala"].dropna().unique().tolist())
+if not salas_disponiveis:
+    st.info("Não há consultórios disponíveis para detalhar.")
+else:
+    sala_detalhe = st.selectbox("Escolha um consultório para detalhar", salas_disponiveis, key="detalhe_sala")
+
+    mask_sala_base = ((df["Sala"] == sala_detalhe)
+                      & df["Dia"].astype(str).isin(sel_dias)
+                      & df["Turno"].isin(sel_turnos))
+    mask_sala = mask_sala_base & mask_medico
+
+    detalhe_base = df[mask_sala_base].copy()
+    detalhe_df = df[mask_sala].copy()
+
+    if detalhe_base.empty:
+        st.info("Sem dados para o consultório selecionado com os filtros atuais de dia/turno.")
+    else:
+        slots_totais = len(detalhe_base)
+        ocupados_ind = int(detalhe_base["Ocupado"].sum())
+        livres_ind = max(slots_totais - ocupados_ind, 0)
+        taxa_ind = (ocupados_ind / slots_totais * 100) if slots_totais > 0 else 0
+        medicos_ind = detalhe_base.loc[detalhe_base["Ocupado"], "Médico"].nunique()
+
+        ic1, ic2, ic3, ic4 = st.columns(4)
+        ic1.metric("Consultório", sala_detalhe)
+        ic2.metric("Slots do consultório", slots_totais)
+        ic3.metric("Slots livres", livres_ind)
+        ic4.metric("Ocupados", ocupados_ind)
+
+        ic5, ic6 = st.columns(2)
+        ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
+        ic6.metric("Médicos distintos no consultório", medicos_ind)
+
+        graf1, graf2 = st.columns(2)
+        with graf1:
+            by_dia_ind = detalhe_base.groupby("Dia")["Ocupado"].mean().reset_index()
+            by_dia_ind["Taxa de Ocupação (%)"] = (by_dia_ind["Ocupado"] * 100).round(1)
+            fig_ind_dia = px.bar(by_dia_ind, x="Dia", y="Taxa de Ocupação (%)",
+                                 title=f"Ocupação por dia - {sala_detalhe}", text="Taxa de Ocupação (%)")
+            fig_ind_dia.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig_ind_dia.update_yaxes(range=[0, 100])
+            st.plotly_chart(fig_ind_dia, use_container_width=True)
+
+        with graf2:
+            by_turno_ind = detalhe_base.groupby("Turno")["Ocupado"].mean().reset_index()
+            by_turno_ind["Taxa de Ocupação (%)"] = (by_turno_ind["Ocupado"] * 100).round(1)
+            fig_ind_turno = px.bar(by_turno_ind, x="Turno", y="Taxa de Ocupação (%)",
+                                   title=f"Ocupação por turno - {sala_detalhe}", text="Taxa de Ocupação (%)")
+            fig_ind_turno.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig_ind_turno.update_yaxes(range=[0, 100])
+            st.plotly_chart(fig_ind_turno, use_container_width=True)
+
+        top_med_ind = (detalhe_df[detalhe_df["Ocupado"]]
+                       .groupby("Médico")
+                       .size()
+                       .reset_index(name="Turnos Utilizados")
+                       .sort_values("Turnos Utilizados", ascending=False)
+                       .head(10))
+        if not top_med_ind.empty:
+            fig_top_ind = px.bar(top_med_ind, x="Turnos Utilizados", y="Médico", orientation="h",
+                                 title=f"Top médicos no consultório {sala_detalhe}", text="Turnos Utilizados")
+            fig_top_ind.update_traces(textposition="outside")
+            st.plotly_chart(fig_top_ind, use_container_width=True)
+        else:
+            st.info("Sem ocupações de médicos no consultório selecionado para os filtros atuais.")
 
 # ---------- Integração das abas MÉDICOS (1, 2, 3...) ----------
 def _to_number(x):
