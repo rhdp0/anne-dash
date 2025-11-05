@@ -58,6 +58,37 @@ def _normalize_col(col):
     c = re.sub(r"\s+", " ", c)
     return c
 
+def _to_number(x):
+    import numpy as np, re as _re
+    if pd.isna(x):
+        return np.nan
+    txt = str(x)
+    txt = _re.sub(r"[^\d,.-]", "", txt)
+    if "," in txt and "." in txt:
+        txt = txt.replace(".", "").replace(",", ".")
+    elif "," in txt and "." not in txt:
+        txt = txt.replace(",", ".")
+    try:
+        return float(txt)
+    except:
+        return pd.NA
+
+def _first_nonempty(series):
+    for val in series:
+        if pd.isna(val):
+            continue
+        text = str(val).strip()
+        if text:
+            return text
+    return ""
+
+def _format_consultorio_label(name):
+    label = str(name).strip()
+    label = re.sub(r"(?i)^produtividade\s*[:\-]*", "", label).strip()
+    label = re.sub(r"(?i)consult[óo]rio", "Consultório", label)
+    label = re.sub(r"\s+", " ", label).strip(" -_:")
+    return label or str(name).strip()
+
 def detect_header_and_parse(excel, sheet_name):
     for header in [0,1,2,3,4]:
         try:
@@ -121,6 +152,84 @@ def tidy_from_sheets(excel):
     full["Ocupado"] = full["Médico"].str.len() > 0
     return full
 
+def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
+    frames = []
+    for sheet in excel.sheet_names:
+        s_norm = _normalize_col(sheet)
+        if "produtiv" not in s_norm or "consult" not in s_norm:
+            continue
+        for header in range(0, 6):
+            try:
+                dfp = excel.parse(sheet, header=header)
+            except Exception:
+                continue
+            dfp = dfp.dropna(how="all").dropna(axis=1, how="all")
+            if dfp.empty:
+                continue
+
+            rename = {}
+            for col in dfp.columns:
+                norm = _normalize_col(col)
+                if "nome" in norm and "consult" not in norm:
+                    rename[col] = "Profissional"
+                elif norm == "crm" or "crm" in norm:
+                    rename[col] = "CRM"
+                elif "especial" in norm:
+                    rename[col] = "Especialidade"
+                elif "exame" in norm:
+                    rename[col] = "Exames Solicitados"
+                elif "cirurg" in norm:
+                    rename[col] = "Cirurgias Solicitadas"
+                elif "consult" in norm and "produtiv" not in norm:
+                    rename[col] = "Consultório"
+
+            dfp = dfp.rename(columns=rename)
+
+            if "Profissional" not in dfp.columns:
+                continue
+            if "Exames Solicitados" not in dfp.columns and "Cirurgias Solicitadas" not in dfp.columns:
+                continue
+
+            keep = [c for c in ["Profissional", "CRM", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas", "Consultório"] if c in dfp.columns]
+            dfp = dfp[keep].copy()
+
+            dfp["Profissional"] = dfp["Profissional"].astype(str).str.strip()
+            dfp = dfp[dfp["Profissional"].str.len() > 0]
+            dfp = dfp[dfp["Profissional"].apply(lambda x: _normalize_col(x) not in {"total", "totais", "subtotal"})]
+
+            if "Consultório" not in dfp.columns:
+                dfp["Consultório"] = _format_consultorio_label(sheet)
+            else:
+                dfp["Consultório"] = dfp["Consultório"].astype(str).str.strip()
+                dfp.loc[dfp["Consultório"].eq(""), "Consultório"] = _format_consultorio_label(sheet)
+                dfp["Consultório"] = dfp["Consultório"].fillna(_format_consultorio_label(sheet))
+
+            if "Especialidade" in dfp.columns:
+                dfp["Especialidade"] = dfp["Especialidade"].astype(str).str.strip()
+            else:
+                dfp["Especialidade"] = ""
+
+            if "CRM" in dfp.columns:
+                dfp["CRM"] = dfp["CRM"].astype(str).str.strip()
+            else:
+                dfp["CRM"] = ""
+
+            for col in ["Exames Solicitados", "Cirurgias Solicitadas"]:
+                if col in dfp.columns:
+                    dfp[col] = dfp[col].apply(_to_number)
+                else:
+                    dfp[col] = 0
+                dfp[col] = pd.to_numeric(dfp[col], errors="coerce").fillna(0)
+
+            dfp["Consultório"] = dfp["Consultório"].apply(_format_consultorio_label)
+            dfp["_SalaNorm"] = dfp["Consultório"].apply(_normalize_col)
+
+            frames.append(dfp)
+            break
+    if not frames:
+        return pd.DataFrame(columns=["Profissional", "CRM", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas", "Consultório", "_SalaNorm"])
+    return pd.concat(frames, ignore_index=True)
+
 df = tidy_from_sheets(excel)
 if df.empty:
     st.error("Não foram encontrados dados nas abas 'CONSULTÓRIO'.")
@@ -148,6 +257,50 @@ if sel_medicos:
 else:
     mask_medico = pd.Series(True, index=df.index)
 fdf = df[mask_base & mask_medico].copy()
+
+produtividade_df = load_produtividade_from_excel(excel)
+ranking_prod_total = pd.DataFrame()
+if not produtividade_df.empty:
+    base_prod = produtividade_df.copy()
+    base_prod["Especialidade"] = base_prod["Especialidade"].fillna("").astype(str).str.strip()
+    base_prod.loc[base_prod["Especialidade"].eq(""), "Especialidade"] = "Não informada"
+
+    agg_map = {
+        "Exames Solicitados": "sum",
+        "Cirurgias Solicitadas": "sum",
+    }
+    if "CRM" in base_prod.columns:
+        agg_map["CRM"] = _first_nonempty
+
+    ranking_prod_total = (
+        base_prod.groupby(["Consultório", "Especialidade", "Profissional"], as_index=False)
+        .agg(agg_map)
+    )
+
+    if "CRM" not in ranking_prod_total.columns:
+        ranking_prod_total["CRM"] = ""
+
+    for col in ["Exames Solicitados", "Cirurgias Solicitadas"]:
+        ranking_prod_total[col] = pd.to_numeric(ranking_prod_total[col], errors="coerce").fillna(0)
+
+    ranking_prod_total["Total Procedimentos"] = (
+        ranking_prod_total["Exames Solicitados"] + ranking_prod_total["Cirurgias Solicitadas"]
+    )
+
+    ranking_prod_total = ranking_prod_total[ranking_prod_total["Total Procedimentos"] > 0]
+
+    for col in ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos"]:
+        ranking_prod_total[col] = ranking_prod_total[col].round().astype(int)
+
+    ranking_prod_total["SalaNorm"] = ranking_prod_total["Consultório"].apply(_normalize_col)
+    ranking_prod_total["Etiqueta"] = ranking_prod_total.apply(
+        lambda r: (
+            f"{r['Profissional']} - {r['Especialidade']} ({r['Consultório']})"
+            if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+            else f"{r['Profissional']} ({r['Consultório']})"
+        ),
+        axis=1,
+    )
 
 # ---------- KPIs ----------
 total_salas = len(set(sel_salas))
@@ -212,75 +365,84 @@ with colD:
 st.markdown("---")
 st.subheader("🏆 Ranking de produtividade dos médicos")
 
-ranking_base = fdf[fdf["Ocupado"]].copy()
-if ranking_base.empty:
-    st.info("Sem registros ocupados nos filtros atuais para gerar o ranking.")
+if ranking_prod_total.empty:
+    st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
 else:
-    def _consultorios_list(series):
-        values = [str(x).strip() for x in series if pd.notna(x) and str(x).strip()]
-        return sorted(set(values))
-
-    ranking = (ranking_base.groupby("Médico")
-               .agg({
-                   "Turno": "count",
-                   "Sala": _consultorios_list,
-                   "Dia": "nunique"
-               })
-               .rename(columns={"Turno": "Turnos Utilizados", "Dia": "Dias distintos"})
-               .reset_index())
-    ranking["Consultórios distintos"] = ranking["Sala"].apply(len)
-    ranking["Consultórios lista"] = ranking["Sala"].apply(lambda lst: ", ".join(lst) if lst else "Sem consultório informado")
-    ranking = ranking.drop(columns=["Sala"])
-    ranking = ranking.sort_values(["Turnos Utilizados", "Consultórios distintos", "Dias distintos", "Médico"],
-                                  ascending=[False, False, False, True])
+    ranking = ranking_prod_total.copy()
+    ranking = ranking.sort_values(
+        ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional", "Consultório"],
+        ascending=[False, False, False, True, True],
+    ).reset_index(drop=True)
     ranking.insert(0, "Rank", range(1, len(ranking) + 1))
 
-    top_n_default = 10 if len(ranking) >= 10 else len(ranking)
-    top_n = st.slider("Quantidade de médicos no ranking", min_value=1, max_value=len(ranking), value=top_n_default)
+    top_n_default = min(len(ranking), 10) if len(ranking) else 1
+    top_n = st.slider(
+        "Quantidade de profissionais no ranking",
+        min_value=1,
+        max_value=len(ranking),
+        value=top_n_default,
+        key="ranking_produtividade_top",
+    )
     top_view = ranking.head(top_n)
 
     destaque_registros = top_view.head(3).to_dict("records")
     if destaque_registros:
         destaque_cols = st.columns(len(destaque_registros))
         for col, row in zip(destaque_cols, destaque_registros):
-            turnos = int(row.get("Turnos Utilizados", 0))
-            consultorios = int(row.get("Consultórios distintos", 0))
-            dias = int(row.get("Dias distintos", 0))
-            medico = row.get("Médico", "")
+            total = int(row.get("Total Procedimentos", 0))
+            exames = int(row.get("Exames Solicitados", 0))
+            cirurgias = int(row.get("Cirurgias Solicitadas", 0))
+            profissional = row.get("Profissional", "")
+            especialidade = row.get("Especialidade", "")
+            consultorio = row.get("Consultório", "")
+            crm = row.get("CRM", "")
             rank = row.get("Rank", "-")
-            consultorio_label = row.get("Consultórios lista", "")
+
+            titulo = f"{rank}º {profissional}" if profissional else f"{rank}º Profissional"
+            if especialidade and especialidade != "Não informada":
+                titulo = f"{titulo} - {especialidade}"
+
+            info_parts = []
+            if consultorio:
+                info_parts.append(consultorio)
+            if crm:
+                info_parts.append(f"CRM {crm}")
+            info_parts.append(f"Exames: {exames}")
+            info_parts.append(f"Cirurgias: {cirurgias}")
+
             col.metric(
-                f"{rank}º {medico} ({consultorio_label})" if consultorio_label else f"{rank}º {medico}",
-                f"{turnos} turno(s)",
-                f"{consultorios} consultório(s) • {dias} dia(s)"
+                titulo,
+                f"{total} procedimento(s)",
+                " • ".join(info_parts),
             )
 
     if not top_view.empty:
         fig_rank = px.bar(
             top_view,
-            x="Turnos Utilizados",
-            y="Médico",
+            x="Total Procedimentos",
+            y="Etiqueta",
             orientation="h",
-            color="Turnos Utilizados",
+            color="Total Procedimentos",
             color_continuous_scale="Blues",
-            title="Top médicos por produtividade",
-            text="Turnos Utilizados",
+            title="Top profissionais por produtividade",
+            text="Total Procedimentos",
         )
         fig_rank.update_layout(coloraxis_showscale=False)
         fig_rank.update_traces(
             texttemplate="%{text}",
             textposition="outside",
-            customdata=top_view[["Consultórios distintos", "Dias distintos", "Rank"]],
+            customdata=top_view[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
             hovertemplate=(
-                "%{customdata[2]}º %{y}<br>"
-                "Turnos utilizados: %{x}<br>"
-                "Consultórios distintos: %{customdata[0]}<br>"
-                "Dias distintos: %{customdata[1]}<extra></extra>"
+                "%{customdata[0]}º %{y}<br>"
+                "Consultório: %{customdata[1]}<br>"
+                "Especialidade: %{customdata[2]}<br>"
+                "Exames solicitados: %{customdata[3]}<br>"
+                "Cirurgias solicitadas: %{customdata[4]}<extra></extra>"
             ),
         )
         fig_rank.update_yaxes(
             categoryorder="array",
-            categoryarray=top_view["Médico"].tolist()[::-1],
+            categoryarray=top_view["Etiqueta"].tolist()[::-1],
         )
         st.plotly_chart(fig_rank, use_container_width=True)
 
@@ -321,36 +483,53 @@ else:
         ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
         ic6.metric("Médicos distintos no consultório", medicos_ind)
 
-        ranking_ind_base = detalhe_df[detalhe_df["Ocupado"]].copy()
         ranking_ind = pd.DataFrame()
-        if ranking_ind_base.empty:
-            st.info("Sem registros ocupados para montar o ranking deste consultório nos filtros atuais.")
+        sala_norm = _normalize_col(sala_detalhe)
+        if ranking_prod_total.empty:
+            st.info("Sem dados de produtividade carregados para detalhar este consultório.")
         else:
-            ranking_ind = (ranking_ind_base.groupby("Médico")
-                           .agg({
-                               "Turno": "count",
-                               "Dia": "nunique"
-                           })
-                           .rename(columns={"Turno": "Turnos Utilizados", "Dia": "Dias distintos"})
-                           .reset_index())
-            ranking_ind = ranking_ind.sort_values(["Turnos Utilizados", "Dias distintos", "Médico"],
-                                                  ascending=[False, False, True])
-            ranking_ind.insert(0, "Rank", range(1, len(ranking_ind) + 1))
+            ranking_ind = ranking_prod_total[ranking_prod_total["SalaNorm"] == sala_norm].copy()
+            if ranking_ind.empty:
+                st.info("Sem registros de produtividade para o consultório selecionado.")
+            else:
+                ranking_ind = ranking_ind.sort_values(
+                    ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional"],
+                    ascending=[False, False, False, True],
+                ).reset_index(drop=True)
+                ranking_ind.insert(0, "Rank", range(1, len(ranking_ind) + 1))
+                ranking_ind["EtiquetaLocal"] = ranking_ind.apply(
+                    lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                    if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                    else r.get("Profissional", ""),
+                    axis=1,
+                )
 
-            destaque_ind = ranking_ind.head(3).to_dict("records")
-            if destaque_ind:
-                st.markdown("#### Destaques de produtividade no consultório")
-                destaque_cols_ind = st.columns(len(destaque_ind))
-                for col, row in zip(destaque_cols_ind, destaque_ind):
-                    turnos = int(row.get("Turnos Utilizados", 0))
-                    dias = int(row.get("Dias distintos", 0))
-                    medico = row.get("Médico", "")
-                    rank = row.get("Rank", "-")
-                    col.metric(
-                        f"{rank}º {medico} ({sala_detalhe})",
-                        f"{turnos} turno(s)",
-                        f"{dias} dia(s) atendido(s)"
-                    )
+                destaque_ind = ranking_ind.head(3).to_dict("records")
+                if destaque_ind:
+                    st.markdown("#### Destaques de produtividade no consultório")
+                    destaque_cols_ind = st.columns(len(destaque_ind))
+                    for col, row in zip(destaque_cols_ind, destaque_ind):
+                        total = int(row.get("Total Procedimentos", 0))
+                        exames = int(row.get("Exames Solicitados", 0))
+                        cirurgias = int(row.get("Cirurgias Solicitadas", 0))
+                        profissional = row.get("Profissional", "")
+                        especialidade = row.get("Especialidade", "")
+                        crm = row.get("CRM", "")
+                        rank = row.get("Rank", "-")
+
+                        titulo_local = f"{rank}º {profissional}" if profissional else f"{rank}º Profissional"
+                        if especialidade and especialidade != "Não informada":
+                            titulo_local = f"{titulo_local} - {especialidade}"
+
+                        delta_parts = [f"Exames: {exames}", f"Cirurgias: {cirurgias}"]
+                        if crm:
+                            delta_parts.insert(0, f"CRM {crm}")
+
+                        col.metric(
+                            titulo_local,
+                            f"{total} procedimento(s)",
+                            " • ".join(delta_parts),
+                        )
 
         graf1, graf2 = st.columns(2)
         with graf1:
@@ -371,33 +550,32 @@ else:
             fig_ind_turno.update_yaxes(range=[0, 100])
             st.plotly_chart(fig_ind_turno, use_container_width=True)
 
-        top_med_ind = ranking_ind.head(10) if not ranking_ind.empty else pd.DataFrame(columns=["Médico", "Turnos Utilizados"])
+        top_med_ind = ranking_ind.head(10) if not ranking_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
         if not top_med_ind.empty:
-            fig_top_ind = px.bar(top_med_ind, x="Turnos Utilizados", y="Médico", orientation="h",
-                                 title=f"Top médicos no consultório {sala_detalhe}", text="Turnos Utilizados")
-            fig_top_ind.update_traces(textposition="outside")
+            fig_top_ind = px.bar(
+                top_med_ind,
+                x="Total Procedimentos",
+                y="EtiquetaLocal",
+                orientation="h",
+                title=f"Produtividade no consultório {sala_detalhe}",
+                text="Total Procedimentos",
+            )
+            fig_top_ind.update_traces(
+                textposition="outside",
+                customdata=top_med_ind[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                hovertemplate=(
+                    "%{customdata[0]}º %{y}<br>"
+                    "Exames solicitados: %{customdata[1]}<br>"
+                    "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
+                ),
+            )
+            fig_top_ind.update_yaxes(
+                categoryorder="array",
+                categoryarray=top_med_ind["EtiquetaLocal"].tolist()[::-1],
+            )
             st.plotly_chart(fig_top_ind, use_container_width=True)
-        elif ranking_ind_base.empty:
-            pass
-        else:
-            st.info("Sem ocupações de médicos no consultório selecionado para os filtros atuais.")
 
 # ---------- Integração das abas MÉDICOS (1, 2, 3...) ----------
-def _to_number(x):
-    import numpy as np, re as _re
-    if pd.isna(x):
-        return np.nan
-    txt = str(x)
-    txt = _re.sub(r"[^\d,.-]", "", txt)
-    if "," in txt and "." in txt:
-        txt = txt.replace(".", "").replace(",", ".")
-    elif "," in txt and "." not in txt:
-        txt = txt.replace(",", ".")
-    try:
-        return float(txt)
-    except:
-        return pd.NA
-
 def load_medicos_from_excel(excel: pd.ExcelFile):
     frames = []
     for s in excel.sheet_names:
