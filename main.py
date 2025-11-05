@@ -13,6 +13,20 @@ st.markdown("""
 div[data-testid="stMetricValue"] {color:#0F4C81;}
 h1, h2, h3 { color:#1f2a44; }
 section[data-testid="stSidebar"] {background-color:#f5f7fb}
+.section-title {
+    display: block;
+    background-color: #eef3fb;
+    border-left: 6px solid #0F4C81;
+    padding: 0.75rem 1rem;
+    margin: 2rem 0 1rem;
+    border-radius: 0.5rem;
+    font-size: clamp(1.35rem, 1.2rem + 1vw, 1.75rem);
+    line-height: 1.4;
+    color: #0F1A33;
+}
+.section-title strong {
+    color: inherit;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -375,7 +389,7 @@ with colD:
 
 # ---------- Ranking de produtividade dos médicos ----------
 st.markdown("---")
-st.subheader("🏆 Ranking de produtividade dos médicos")
+st.markdown('<h2 class="section-title">🏆 Ranking de produtividade dos médicos</h2>', unsafe_allow_html=True)
 
 if ranking_prod_total.empty:
     st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
@@ -462,7 +476,7 @@ else:
 
 # ---------- Visão individual por consultório ----------
 st.markdown("---")
-st.subheader("🔍 Indicadores individuais por consultório")
+st.markdown('<h2 class="section-title">🔍 Indicadores individuais por consultório</h2>', unsafe_allow_html=True)
 
 salas_disponiveis = sorted(df["Sala"].dropna().unique().tolist())
 if not salas_disponiveis:
@@ -643,7 +657,7 @@ else:
     med_enriched = med_df.merge(usos, on="Médico", how="left")
 
     st.markdown("---")
-    st.subheader("💼 Indicador: PLANOS × Aluguel × Profissionais")
+    st.markdown('<h2 class="section-title">💼 Indicador: PLANOS × Aluguel × Profissionais</h2>', unsafe_allow_html=True)
 
     # KPIs deste bloco
     tot_prof = med_enriched["Médico"].nunique()
@@ -732,7 +746,7 @@ else:
     st.dataframe(med_enriched[cols_show].sort_values(["Planos","Especialidade","Valor Aluguel","Médico"], na_position="last"), use_container_width=True)
 
 # ---------- Detalhamento ----------
-st.subheader("📋 Agenda Detalhada (Tabela)")
+st.markdown('<h2 class="section-title">📋 Agenda Detalhada (Tabela)</h2>', unsafe_allow_html=True)
 st.dataframe(
     fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
     use_container_width=True
