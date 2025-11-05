@@ -38,6 +38,7 @@ section[data-testid="stSidebar"] {background-color:#f5f7fb}
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown('<div id="topo"></div>', unsafe_allow_html=True)
 st.title("🏥 Dashboard de Ocupação dos Consultórios")
 st.caption("Lendo somente as abas **CONSULTÓRIO** (ignorando 'OCUPAÇÃO DAS SALAS'). Integra automaticamente TODAS as abas **MÉDICOS** (ex.: 'MÉDICOS 1', 'MÉDICOS 2', 'MÉDICOS 3').")
 
@@ -66,6 +67,16 @@ else:
     st.stop()
 
 st.sidebar.success(f"Usando dados de: {fonte}")
+st.sidebar.markdown("### Navegação")
+st.sidebar.markdown(
+    """
+    <a href="#ranking">🏆 Ranking</a><br>
+    <a href="#consultorio">🔍 Consultórios</a><br>
+    <a href="#planos">💼 Planos &amp; Aluguel</a><br>
+    <a href="#agenda">📋 Agenda</a>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------- Utilitários ----------
 def _normalize_col(col):
@@ -396,6 +407,7 @@ with colD:
         st.info("Sem médicos ocupando slots nos filtros atuais.")
 
 # ---------- Ranking de produtividade dos médicos ----------
+st.markdown('<div id="ranking"></div>', unsafe_allow_html=True)
 with st.container():
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<h2 class="section-title">🏆 Ranking de produtividade dos médicos</h2>', unsafe_allow_html=True)
@@ -486,6 +498,7 @@ with st.container():
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Visão individual por consultório ----------
+st.markdown('<div id="consultorio"></div>', unsafe_allow_html=True)
 with st.container():
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<h2 class="section-title">🔍 Indicadores individuais por consultório</h2>', unsafe_allow_html=True)
@@ -663,6 +676,8 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
 
 med_df = load_medicos_from_excel(excel)
 
+st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
+
 if med_df.empty:
     st.warning("Não foram encontradas abas de **MÉDICOS** no arquivo. Os indicadores de plano/aluguel ficarão ocultos.")
 else:
@@ -763,6 +778,7 @@ else:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Detalhamento ----------
+st.markdown('<div id="agenda"></div>', unsafe_allow_html=True)
 st.markdown('<h2 class="section-title">📋 Agenda Detalhada (Tabela)</h2>', unsafe_allow_html=True)
 st.dataframe(
     fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
@@ -770,3 +786,8 @@ st.dataframe(
 )
 csv = fdf.to_csv(index=False).encode("utf-8-sig")
 st.download_button("⬇️ Baixar dados filtrados (CSV)", data=csv, file_name="agenda_filtrada.csv", mime="text/csv")
+
+st.markdown(
+    '<div style="text-align: right; margin-top: 2rem;"><a href="#topo">⬆️ Voltar ao topo</a></div>',
+    unsafe_allow_html=True,
+)
