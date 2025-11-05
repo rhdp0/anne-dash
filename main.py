@@ -962,9 +962,27 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
         else:
             out["Consultório"] = fallback_series
     if "Valor Aluguel" in out.columns: out["Valor Aluguel"] = out["Valor Aluguel"].apply(_to_number)
-    for c in ["Sala Exclusiva","Sala Dividida"]:
+    for c in ["Sala Exclusiva", "Sala Dividida"]:
         if c in out.columns:
-            out[c] = out[c].astype(str).str.strip().str.upper().replace({"X":"Sim","":""})
+            col = out[c].astype(str).str.strip()
+            col = col.replace(
+                {"nan": "", "NaN": "", "None": "", "none": "", "": ""}
+            )
+            col_lower = col.str.lower()
+            mapped = col_lower.map(
+                {
+                    "sim": "Sim",
+                    "x": "Sim",
+                    "1": "Sim",
+                    "true": "Sim",
+                    "não": "Não",
+                    "nao": "Não",
+                    "n": "Não",
+                    "0": "Não",
+                    "false": "Não",
+                }
+            )
+            out[c] = mapped.fillna(col)
     return out
 
 med_df = load_medicos_from_excel(excel)
