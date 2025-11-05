@@ -228,15 +228,19 @@ else:
     top_n = st.slider("Quantidade de médicos no ranking", min_value=1, max_value=len(ranking), value=top_n_default)
     top_view = ranking.head(top_n)
 
-    destaque = list(top_view.itertuples(index=False))
-    col_count = min(len(destaque), 3)
-    if col_count:
-        destaque_cols = st.columns(col_count)
-        for col, row in zip(destaque_cols, destaque[:col_count]):
+    destaque_registros = top_view.head(3).to_dict("records")
+    if destaque_registros:
+        destaque_cols = st.columns(len(destaque_registros))
+        for col, row in zip(destaque_cols, destaque_registros):
+            turnos = int(row.get("Turnos Utilizados", 0))
+            consultorios = int(row.get("Consultórios distintos", 0))
+            dias = int(row.get("Dias distintos", 0))
+            medico = row.get("Médico", "")
+            rank = row.get("Rank", "-")
             col.metric(
-                f"{row.Rank}º {row.Médico}",
-                f"{row.Turnos_Utilizados} turno(s)",
-                f"{row.Consultórios_distintos} consultório(s) • {row.Dias_distintos} dia(s)"
+                f"{rank}º {medico}",
+                f"{turnos} turno(s)",
+                f"{consultorios} consultório(s) • {dias} dia(s)"
             )
 
     if not top_view.empty:
