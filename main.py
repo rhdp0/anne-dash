@@ -156,6 +156,8 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
     frames = []
     for sheet in excel.sheet_names:
         s_norm = _normalize_col(sheet)
+        if "consultorios" in s_norm:
+            continue
         if "produtiv" not in s_norm or "consult" not in s_norm:
             continue
         for header in range(0, 6):
