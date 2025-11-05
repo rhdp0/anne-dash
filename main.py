@@ -208,6 +208,26 @@ with colD:
     else:
         st.info("Sem médicos ocupando slots nos filtros atuais.")
 
+# ---------- Ranking de produtividade dos médicos ----------
+st.markdown("---")
+st.subheader("🏆 Ranking de produtividade dos médicos")
+
+ranking_base = fdf[fdf["Ocupado"]].copy()
+if ranking_base.empty:
+    st.info("Sem registros ocupados nos filtros atuais para gerar o ranking.")
+else:
+    ranking = (ranking_base.groupby("Médico")
+               .agg({"Turno": "count", "Sala": "nunique", "Dia": "nunique"})
+               .rename(columns={"Turno": "Turnos Utilizados", "Sala": "Consultórios distintos", "Dia": "Dias distintos"})
+               .reset_index())
+    ranking = ranking.sort_values(["Turnos Utilizados", "Consultórios distintos", "Dias distintos", "Médico"],
+                                  ascending=[False, False, False, True])
+    ranking.insert(0, "Rank", range(1, len(ranking) + 1))
+
+    top_n_default = 10 if len(ranking) >= 10 else len(ranking)
+    top_n = st.slider("Quantidade de médicos no ranking", min_value=1, max_value=len(ranking), value=top_n_default)
+    st.dataframe(ranking.head(top_n), use_container_width=True)
+
 # ---------- Visão individual por consultório ----------
 st.markdown("---")
 st.subheader("🔍 Indicadores individuais por consultório")
