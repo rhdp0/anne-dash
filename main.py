@@ -208,6 +208,70 @@ with colD:
     else:
         st.info("Sem médicos ocupando slots nos filtros atuais.")
 
+# ---------- Ranking de produtividade dos médicos ----------
+st.markdown("---")
+st.subheader("🏆 Ranking de produtividade dos médicos")
+
+ranking_base = fdf[fdf["Ocupado"]].copy()
+if ranking_base.empty:
+    st.info("Sem registros ocupados nos filtros atuais para gerar o ranking.")
+else:
+    ranking = (ranking_base.groupby("Médico")
+               .agg({"Turno": "count", "Sala": "nunique", "Dia": "nunique"})
+               .rename(columns={"Turno": "Turnos Utilizados", "Sala": "Consultórios distintos", "Dia": "Dias distintos"})
+               .reset_index())
+    ranking = ranking.sort_values(["Turnos Utilizados", "Consultórios distintos", "Dias distintos", "Médico"],
+                                  ascending=[False, False, False, True])
+    ranking.insert(0, "Rank", range(1, len(ranking) + 1))
+
+    top_n_default = 10 if len(ranking) >= 10 else len(ranking)
+    top_n = st.slider("Quantidade de médicos no ranking", min_value=1, max_value=len(ranking), value=top_n_default)
+    top_view = ranking.head(top_n)
+
+    destaque_registros = top_view.head(3).to_dict("records")
+    if destaque_registros:
+        destaque_cols = st.columns(len(destaque_registros))
+        for col, row in zip(destaque_cols, destaque_registros):
+            turnos = int(row.get("Turnos Utilizados", 0))
+            consultorios = int(row.get("Consultórios distintos", 0))
+            dias = int(row.get("Dias distintos", 0))
+            medico = row.get("Médico", "")
+            rank = row.get("Rank", "-")
+            col.metric(
+                f"{rank}º {medico}",
+                f"{turnos} turno(s)",
+                f"{consultorios} consultório(s) • {dias} dia(s)"
+            )
+
+    if not top_view.empty:
+        fig_rank = px.bar(
+            top_view,
+            x="Turnos Utilizados",
+            y="Médico",
+            orientation="h",
+            color="Turnos Utilizados",
+            color_continuous_scale="Blues",
+            title="Top médicos por produtividade",
+            text="Turnos Utilizados",
+        )
+        fig_rank.update_layout(coloraxis_showscale=False)
+        fig_rank.update_traces(
+            texttemplate="%{text}",
+            textposition="outside",
+            customdata=top_view[["Consultórios distintos", "Dias distintos", "Rank"]],
+            hovertemplate=(
+                "%{customdata[2]}º %{y}<br>"
+                "Turnos utilizados: %{x}<br>"
+                "Consultórios distintos: %{customdata[0]}<br>"
+                "Dias distintos: %{customdata[1]}<extra></extra>"
+            ),
+        )
+        fig_rank.update_yaxes(
+            categoryorder="array",
+            categoryarray=top_view["Médico"].tolist()[::-1],
+        )
+        st.plotly_chart(fig_rank, use_container_width=True)
+
 # ---------- Visão individual por consultório ----------
 st.markdown("---")
 st.subheader("🔍 Indicadores individuais por consultório")
