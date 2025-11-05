@@ -226,7 +226,47 @@ else:
 
     top_n_default = 10 if len(ranking) >= 10 else len(ranking)
     top_n = st.slider("Quantidade de médicos no ranking", min_value=1, max_value=len(ranking), value=top_n_default)
-    st.dataframe(ranking.head(top_n), use_container_width=True)
+    top_view = ranking.head(top_n)
+
+    destaque = list(top_view.itertuples(index=False))
+    col_count = min(len(destaque), 3)
+    if col_count:
+        destaque_cols = st.columns(col_count)
+        for col, row in zip(destaque_cols, destaque[:col_count]):
+            col.metric(
+                f"{row.Rank}º {row.Médico}",
+                f"{row.Turnos_Utilizados} turno(s)",
+                f"{row.Consultórios_distintos} consultório(s) • {row.Dias_distintos} dia(s)"
+            )
+
+    if not top_view.empty:
+        fig_rank = px.bar(
+            top_view,
+            x="Turnos Utilizados",
+            y="Médico",
+            orientation="h",
+            color="Turnos Utilizados",
+            color_continuous_scale="Blues",
+            title="Top médicos por produtividade",
+            text="Turnos Utilizados",
+        )
+        fig_rank.update_layout(coloraxis_showscale=False)
+        fig_rank.update_traces(
+            texttemplate="%{text}",
+            textposition="outside",
+            customdata=top_view[["Consultórios distintos", "Dias distintos", "Rank"]],
+            hovertemplate=(
+                "%{customdata[2]}º %{y}<br>"
+                "Turnos utilizados: %{x}<br>"
+                "Consultórios distintos: %{customdata[0]}<br>"
+                "Dias distintos: %{customdata[1]}<extra></extra>"
+            ),
+        )
+        fig_rank.update_yaxes(
+            categoryorder="array",
+            categoryarray=top_view["Médico"].tolist()[::-1],
+        )
+        st.plotly_chart(fig_rank, use_container_width=True)
 
 # ---------- Visão individual por consultório ----------
 st.markdown("---")
