@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 import unicodedata
+import numpy as np
 
 import pandas as pd
 import streamlit as st
@@ -905,6 +906,14 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
             norm = {c:_normalize_col(c) for c in dfm.columns}
             dfm.columns = [norm[c] for c in dfm.columns]
             rename = {}
+            consultorio_candidates = []
+            def _is_consultorio_candidate(col_name: str) -> bool:
+                col_norm = _normalize_col(col_name)
+                if not col_norm:
+                    return False
+                if any(kw in col_norm for kw in ["exclus", "divid", "plan", "valor", "crm", "turno"]):
+                    return False
+                return any(kw in col_norm for kw in ["consult", "sala", "unid"])
             for c in dfm.columns:
                 if "nome" in c or "medico" in c: rename[c]="Médico"
                 if c=="crm" or "crm" in c: rename[c]="CRM"
@@ -913,11 +922,21 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
                 if "valor" in c or "aluguel" in c or "negoci" in c: rename[c]="Valor Aluguel"
                 if "exclus" in c: rename[c]="Sala Exclusiva"
                 if "divid" in c: rename[c]="Sala Dividida"
-                if ("consult" in c or "sala" in c or "unid" in c) and not any(
-                    kw in c for kw in ["exclus", "divid", "plan", "valor", "crm", "turno"]
-                ):
-                    rename[c] = "Consultório"
+                if _is_consultorio_candidate(c):
+                    consultorio_candidates.append(c)
+                    if "consult" in c:
+                        rename[c] = "Consultório"
             dfm = dfm.rename(columns=rename)
+            if "Consultório" not in dfm.columns and consultorio_candidates:
+                candidate = None
+                for cand in consultorio_candidates:
+                    if cand in dfm.columns:
+                        candidate = cand
+                        break
+                if candidate is not None:
+                    dfm = dfm.rename(columns={candidate: "Consultório"})
+            if "Consultório" not in dfm.columns:
+                dfm["Consultório"] = _format_consultorio_label(s)
             keep = [
                 c
                 for c in [
@@ -943,24 +962,19 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
     if "Médico" in out.columns: out["Médico"] = out["Médico"].astype(str).str.strip()
     if "Planos" in out.columns: out["Planos"] = out["Planos"].astype(str).str.strip()
     if "Consultório" in out.columns:
-        out["Consultório"] = out["Consultório"].astype(str).str.strip()
-        out.loc[
-            out["Consultório"].isin(["", "nan", "NaN", "none", "None"]),
-            "Consultório",
-        ] = pd.NA
-    fallback_cols = [c for c in ["Sala Exclusiva", "Sala Dividida"] if c in out.columns]
-    if fallback_cols:
-        fallback_values = (
-            out[fallback_cols]
-            .astype(str)
-            .apply(lambda col: col.str.strip())
-            .replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA})
-        )
-        fallback_series = fallback_values.bfill(axis=1).iloc[:, 0]
-        if "Consultório" in out.columns:
-            out["Consultório"] = out["Consultório"].fillna(fallback_series)
-        else:
-            out["Consultório"] = fallback_series
+        def _clean_consultorio(value):
+            if pd.isna(value):
+                return pd.NA
+            text = str(value).strip()
+            if not text:
+                return pd.NA
+            if _normalize_col(text) in {"nan", "none", "null", "sem informacao", "sem dado", "sem dados", "sem sala"}:
+                return pd.NA
+            formatted = _format_consultorio_label(text)
+            formatted = formatted.strip()
+            return formatted if formatted else pd.NA
+
+        out["Consultório"] = out["Consultório"].apply(_clean_consultorio)
     if "Valor Aluguel" in out.columns: out["Valor Aluguel"] = out["Valor Aluguel"].apply(_to_number)
     for c in ["Sala Exclusiva", "Sala Dividida"]:
         if c in out.columns:
@@ -1001,39 +1015,44 @@ else:
     med_enriched = med_df.merge(usos, on="Médico", how="left")
 
     if "Consultório" in med_enriched.columns and "Médico" in med_enriched.columns:
-        group_cols = ["Consultório", "Médico"]
-        agg_dict = {"Profissionais": ("Médico", "nunique")}
-        if "Valor Aluguel" in med_enriched.columns:
-            agg_dict["Valor Aluguel Total"] = ("Valor Aluguel", "sum")
-        consultorio_medico_agg = (
-            med_enriched.groupby(group_cols, dropna=False)
-            .agg(**agg_dict)
-            .reset_index()
+        med_consult = med_enriched.copy()
+        med_consult["Consultório"] = med_consult["Consultório"].apply(
+            lambda v: v if pd.isna(v) else _format_consultorio_label(v)
         )
-        consultorio_medico_agg["Consultório"] = consultorio_medico_agg["Consultório"].fillna("Não informado")
-        if "Valor Aluguel Total" in consultorio_medico_agg.columns:
-            consultorio_medico_agg["Valor Aluguel Total"] = consultorio_medico_agg[
-                "Valor Aluguel Total"
-            ].fillna(0)
+        med_consult = med_consult.dropna(subset=["Consultório"])
+        med_consult = med_consult[med_consult["Consultório"].astype(str).str.strip() != ""]
 
-        agg_totais = {"Profissionais": ("Médico", "nunique")}
-        if "Valor Aluguel" in med_enriched.columns:
-            agg_totais["Valor Aluguel Total"] = ("Valor Aluguel", "sum")
-        consultorio_totais = (
-            med_enriched.groupby("Consultório", dropna=False)
-            .agg(**agg_totais)
-            .reset_index()
-        )
-        consultorio_totais["Consultório"] = consultorio_totais["Consultório"].fillna("Não informado")
-        if "Valor Aluguel Total" in consultorio_totais.columns:
-            consultorio_totais["Valor Aluguel Total"] = consultorio_totais[
-                "Valor Aluguel Total"
-            ].fillna(0)
-        consultorio_totais = consultorio_totais.sort_values(
-            ["Valor Aluguel Total", "Profissionais"],
-            ascending=[False, False],
-            na_position="last",
-        )
+        if not med_consult.empty:
+            def _sum_ignore_missing(series: pd.Series):
+                non_null = series.dropna()
+                if non_null.empty:
+                    return np.nan
+                return non_null.sum()
+
+            group_cols = ["Consultório", "Médico"]
+            agg_dict = {"Profissionais": ("Médico", "nunique")}
+            if "Valor Aluguel" in med_consult.columns:
+                agg_dict["Valor Aluguel Total"] = ("Valor Aluguel", _sum_ignore_missing)
+            consultorio_medico_agg = (
+                med_consult.groupby(group_cols)
+                .agg(**agg_dict)
+                .reset_index()
+            )
+
+            agg_totais = {"Profissionais": ("Médico", "nunique")}
+            if "Valor Aluguel" in med_consult.columns:
+                agg_totais["Valor Aluguel Total"] = ("Valor Aluguel", _sum_ignore_missing)
+            consultorio_totais = (
+                med_consult.groupby("Consultório")
+                .agg(**agg_totais)
+                .reset_index()
+            )
+            if "Valor Aluguel Total" in consultorio_totais.columns:
+                consultorio_totais = consultorio_totais.sort_values(
+                    ["Valor Aluguel Total", "Profissionais"],
+                    ascending=[False, False],
+                    na_position="last",
+                )
 
     with st.container():
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -1128,19 +1147,23 @@ else:
         gc1, gc2 = st.columns(2)
         with gc1:
             if not consultorio_totais.empty and "Valor Aluguel Total" in consultorio_totais.columns:
-                fig_cons_valor = px.bar(
-                    consultorio_totais,
-                    x="Consultório",
-                    y="Valor Aluguel Total",
-                    title="Valor total de aluguel por consultório",
-                    text="Valor Aluguel Total",
-                )
-                fig_cons_valor.update_traces(
-                    texttemplate="R$ %{y:,.2f}",
-                    textposition="outside",
-                )
-                fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
-                st.plotly_chart(fig_cons_valor, use_container_width=True)
+                consultorio_valores = consultorio_totais.dropna(subset=["Valor Aluguel Total"])
+                if not consultorio_valores.empty:
+                    fig_cons_valor = px.bar(
+                        consultorio_valores,
+                        x="Consultório",
+                        y="Valor Aluguel Total",
+                        title="Valor total de aluguel por consultório",
+                        text="Valor Aluguel Total",
+                    )
+                    fig_cons_valor.update_traces(
+                        texttemplate="R$ %{y:,.2f}",
+                        textposition="outside",
+                    )
+                    fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
+                    st.plotly_chart(fig_cons_valor, use_container_width=True)
+                else:
+                    st.info("Nenhum valor de aluguel informado para os consultórios listados.")
             else:
                 st.info("Inclua 'Consultório' e 'Valor Aluguel' para visualizar os totais.")
         with gc2:
