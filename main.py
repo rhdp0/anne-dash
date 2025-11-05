@@ -129,19 +129,61 @@ def _format_consultorio_label(name):
 
 
 def _sanitize_pdf_text(text: str) -> str:
-    """Remove acentuação incompatível com fontes padrão do FPDF."""
+    """Remove acentuação incompatível e caracteres fora do conjunto latin-1."""
     if text is None:
         return ""
     if not isinstance(text, str):
         text = str(text)
+
     normalized = unicodedata.normalize("NFKD", text)
-    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    cleaned = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    # Substitui marcadores e aspas especiais por equivalentes simples
+    substitutions = {
+        "•": "-",
+        "–": "-",
+        "—": "-",
+        "“": '"',
+        "”": '"',
+        "’": "'",
+        "´": "'",
+        "`": "'",
+        "ª": "a",
+        "º": "o",
+    }
+    for old, new in substitutions.items():
+        cleaned = cleaned.replace(old, new)
+
+    cleaned = cleaned.replace("\xa0", " ")
+
+    lines = []
+    for line in cleaned.splitlines():
+        collapsed = re.sub(r"\s+", " ", line).strip()
+        lines.append(collapsed)
+    cleaned = "\n".join(lines).strip()
+
+    # Mantém apenas caracteres suportados pelo encoding padrão do FPDF (latin-1)
+    cleaned = cleaned.encode("latin-1", "ignore").decode("latin-1")
+    return cleaned
 
 
 def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
     pdf = FPDF()
+    pdf.set_left_margin(15)
+    pdf.set_right_margin(15)
+    pdf.set_top_margin(15)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+
+    effective_width = pdf.w - pdf.l_margin - pdf.r_margin
+
+    def _write_line(text: str, height: float = 6):
+        sanitized = _sanitize_pdf_text(text)
+        if sanitized:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(effective_width, height, sanitized)
+        else:
+            pdf.ln(height)
 
     def _safe_int(value):
         if value is None:
@@ -159,7 +201,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
             return None
 
     pdf.set_font("Helvetica", "B", 16)
-    pdf.multi_cell(0, 10, _sanitize_pdf_text("Relatorio Completo - Dashboard de Consultorios"))
+    _write_line("Relatorio Completo - Dashboard de Consultorios", height=10)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 6, _sanitize_pdf_text(f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), ln=1)
     pdf.ln(4)
@@ -169,7 +211,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
         pdf.cell(0, 8, _sanitize_pdf_text("Resumo dos principais indicadores"), ln=1)
         pdf.set_font("Helvetica", "", 11)
         for key, value in summary_metrics.items():
-            pdf.multi_cell(0, 6, _sanitize_pdf_text(f"{key}: {value}"))
+            _write_line(f"{key}: {value}")
         pdf.ln(2)
 
     if ranking_df is not None and not ranking_df.empty:
@@ -219,9 +261,9 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
             if especialidade and especialidade != "Não informada":
                 titulo = f"{titulo} - {especialidade}"
 
-            pdf.multi_cell(0, 6, _sanitize_pdf_text(titulo))
+            _write_line(titulo)
             if detalhes:
-                pdf.multi_cell(0, 5, _sanitize_pdf_text(" • ".join(detalhes)))
+                _write_line("; ".join(detalhes), height=5)
             pdf.ln(1)
         pdf.ln(2)
 
@@ -232,7 +274,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
         total_profissionais = (
             med_df["Médico"].nunique() if "Médico" in med_df.columns else len(med_df)
         )
-        pdf.multi_cell(0, 6, _sanitize_pdf_text(f"Profissionais analisados: {total_profissionais}"))
+        _write_line(f"Profissionais analisados: {total_profissionais}")
 
         if "Planos" in med_df.columns:
             planos = med_df.copy()
@@ -243,11 +285,11 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
                 planos_grouped = planos["Planos"].value_counts().reset_index()
                 planos_grouped.columns = ["Planos", "Profissionais"]
             planos_grouped = planos_grouped.sort_values("Profissionais", ascending=False)
-            pdf.multi_cell(0, 6, _sanitize_pdf_text("Distribuicao por PLANOS:"))
+            _write_line("Distribuicao por PLANOS:")
             for _, row in planos_grouped.head(5).iterrows():
                 plano_nome = row.get("Planos", "Nao informado")
                 qtd = _safe_int(row.get("Profissionais", 0)) or 0
-                pdf.multi_cell(0, 5, _sanitize_pdf_text(f"- {plano_nome}: {qtd} profissionais"))
+                _write_line(f"- {plano_nome}: {qtd} profissionais", height=5)
 
         if "Valor Aluguel" in med_df.columns:
             valores = pd.to_numeric(med_df["Valor Aluguel"], errors="coerce").dropna()
@@ -256,17 +298,17 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
                 minimo = valores.min()
                 maximo = valores.max()
                 format_currency = lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                pdf.multi_cell(0, 6, _sanitize_pdf_text("Valores de aluguel (considerando dados disponiveis):"))
-                pdf.multi_cell(0, 5, _sanitize_pdf_text(f"- Media: {format_currency(media)}"))
-                pdf.multi_cell(0, 5, _sanitize_pdf_text(f"- Minimo: {format_currency(minimo)}"))
-                pdf.multi_cell(0, 5, _sanitize_pdf_text(f"- Maximo: {format_currency(maximo)}"))
+                _write_line("Valores de aluguel (considerando dados disponiveis):")
+                _write_line(f"- Media: {format_currency(media)}", height=5)
+                _write_line(f"- Minimo: {format_currency(minimo)}", height=5)
+                _write_line(f"- Maximo: {format_currency(maximo)}", height=5)
         pdf.ln(2)
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, _sanitize_pdf_text("Agenda filtrada"), ln=1)
     pdf.set_font("Helvetica", "", 11)
     if agenda_df is None or agenda_df.empty:
-        pdf.multi_cell(0, 6, _sanitize_pdf_text("Nenhum agendamento encontrado para os filtros atuais."))
+        _write_line("Nenhum agendamento encontrado para os filtros atuais.")
     else:
         agenda_cols = [c for c in ["Sala", "Dia", "Turno", "Médico"] if c in agenda_df.columns]
         agenda_view = agenda_df.copy()
@@ -275,10 +317,10 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
         sort_cols = [c for c in ["Sala", "Dia", "Turno"] if c in agenda_view.columns]
         if sort_cols:
             agenda_view = agenda_view.sort_values(sort_cols)
-        pdf.multi_cell(0, 6, _sanitize_pdf_text("Primeiros 30 registros:"))
+        _write_line("Primeiros 30 registros:")
         for _, row in agenda_view.head(30).iterrows():
             linha = " | ".join(str(row.get(col, "")) for col in agenda_cols)
-            pdf.multi_cell(0, 5, _sanitize_pdf_text(linha))
+            _write_line(linha, height=5)
 
     output = pdf.output(dest="S")
     if isinstance(output, str):
