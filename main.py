@@ -200,7 +200,13 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
             if "Consultório" not in dfp.columns:
                 dfp["Consultório"] = _format_consultorio_label(sheet)
             else:
-                dfp["Consultório"] = dfp["Consultório"].astype(str).str.strip()
+                dfp["Consultório"] = (
+                    dfp["Consultório"].astype(str).str.strip().replace(
+                        r"^(?i)(nan|none|null|na|n/a|sem\s*informac[aã]o|sem\s*dados?)$",
+                        "",
+                        regex=True,
+                    )
+                )
                 dfp.loc[dfp["Consultório"].eq(""), "Consultório"] = _format_consultorio_label(sheet)
                 dfp["Consultório"] = dfp["Consultório"].fillna(_format_consultorio_label(sheet))
 
