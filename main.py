@@ -268,16 +268,24 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
         pdf.ln(2)
 
     if med_df is not None and not med_df.empty:
+        med_pdf = med_df.copy()
+        format_currency = (
+            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+        if "Valor Aluguel" in med_pdf.columns:
+            med_pdf["Valor Aluguel"] = pd.to_numeric(
+                med_pdf["Valor Aluguel"], errors="coerce"
+            )
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, _sanitize_pdf_text("Planos, aluguel e profissionais"), ln=1)
         pdf.set_font("Helvetica", "", 11)
         total_profissionais = (
-            med_df["Médico"].nunique() if "Médico" in med_df.columns else len(med_df)
+            med_pdf["Médico"].nunique() if "Médico" in med_pdf.columns else len(med_pdf)
         )
         _write_line(f"Profissionais analisados: {total_profissionais}")
 
-        if "Planos" in med_df.columns:
-            planos = med_df.copy()
+        if "Planos" in med_pdf.columns:
+            planos = med_pdf.copy()
             planos["Planos"] = planos["Planos"].fillna("Nao informado").astype(str).str.strip()
             if "Médico" in planos.columns:
                 planos_grouped = planos.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
@@ -291,13 +299,39 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
                 qtd = _safe_int(row.get("Profissionais", 0)) or 0
                 _write_line(f"- {plano_nome}: {qtd} profissionais", height=5)
 
-        if "Valor Aluguel" in med_df.columns:
-            valores = pd.to_numeric(med_df["Valor Aluguel"], errors="coerce").dropna()
+        if "Consultório" in med_pdf.columns:
+            consult = med_pdf.copy()
+            consult["Consultório"] = consult["Consultório"].fillna("Nao informado").astype(str).str.strip()
+            consult_totais = consult.groupby("Consultório")
+            consult_resumo = consult_totais["Médico"].nunique().reset_index(name="Profissionais")
+            if "Valor Aluguel" in consult.columns:
+                consult_resumo["Valor total aluguel"] = consult_totais["Valor Aluguel"].sum(min_count=1)
+            if "Valor total aluguel" in consult_resumo.columns:
+                consult_resumo = consult_resumo.sort_values(
+                    ["Valor total aluguel", "Profissionais"],
+                    ascending=[False, False],
+                    na_position="last",
+                )
+            else:
+                consult_resumo = consult_resumo.sort_values(
+                    "Profissionais", ascending=False, na_position="last"
+                )
+            _write_line("Totais por consultório:")
+            for _, row in consult_resumo.head(5).iterrows():
+                texto = f"- {row.get('Consultório', 'Nao informado')}: {int(row.get('Profissionais', 0))} profissionais"
+                if (
+                    "Valor total aluguel" in consult_resumo.columns
+                    and pd.notna(row.get("Valor total aluguel"))
+                ):
+                    texto += f" | Valor total: {format_currency(row['Valor total aluguel'])}"
+                _write_line(texto, height=5)
+
+        if "Valor Aluguel" in med_pdf.columns:
+            valores = med_pdf["Valor Aluguel"].dropna()
             if not valores.empty:
                 media = valores.mean()
                 minimo = valores.min()
                 maximo = valores.max()
-                format_currency = lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 _write_line("Valores de aluguel (considerando dados disponiveis):")
                 _write_line(f"- Media: {format_currency(media)}", height=5)
                 _write_line(f"- Minimo: {format_currency(minimo)}", height=5)
@@ -879,8 +913,25 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
                 if "valor" in c or "aluguel" in c or "negoci" in c: rename[c]="Valor Aluguel"
                 if "exclus" in c: rename[c]="Sala Exclusiva"
                 if "divid" in c: rename[c]="Sala Dividida"
+                if ("consult" in c or "sala" in c or "unid" in c) and not any(
+                    kw in c for kw in ["exclus", "divid", "plan", "valor", "crm", "turno"]
+                ):
+                    rename[c] = "Consultório"
             dfm = dfm.rename(columns=rename)
-            keep = [c for c in ["Médico","CRM","Especialidade","Planos","Sala Exclusiva","Sala Dividida","Valor Aluguel"] if c in dfm.columns]
+            keep = [
+                c
+                for c in [
+                    "Médico",
+                    "CRM",
+                    "Especialidade",
+                    "Planos",
+                    "Sala Exclusiva",
+                    "Sala Dividida",
+                    "Consultório",
+                    "Valor Aluguel",
+                ]
+                if c in dfm.columns
+            ]
             if not keep:
                 continue
             dfm = dfm[keep].copy()
@@ -891,10 +942,47 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
     # normalizações finais
     if "Médico" in out.columns: out["Médico"] = out["Médico"].astype(str).str.strip()
     if "Planos" in out.columns: out["Planos"] = out["Planos"].astype(str).str.strip()
+    if "Consultório" in out.columns:
+        out["Consultório"] = out["Consultório"].astype(str).str.strip()
+        out.loc[
+            out["Consultório"].isin(["", "nan", "NaN", "none", "None"]),
+            "Consultório",
+        ] = pd.NA
+    fallback_cols = [c for c in ["Sala Exclusiva", "Sala Dividida"] if c in out.columns]
+    if fallback_cols:
+        fallback_values = (
+            out[fallback_cols]
+            .astype(str)
+            .apply(lambda col: col.str.strip())
+            .replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA})
+        )
+        fallback_series = fallback_values.bfill(axis=1).iloc[:, 0]
+        if "Consultório" in out.columns:
+            out["Consultório"] = out["Consultório"].fillna(fallback_series)
+        else:
+            out["Consultório"] = fallback_series
     if "Valor Aluguel" in out.columns: out["Valor Aluguel"] = out["Valor Aluguel"].apply(_to_number)
-    for c in ["Sala Exclusiva","Sala Dividida"]:
+    for c in ["Sala Exclusiva", "Sala Dividida"]:
         if c in out.columns:
-            out[c] = out[c].astype(str).str.strip().str.upper().replace({"X":"Sim","":""})
+            col = out[c].astype(str).str.strip()
+            col = col.replace(
+                {"nan": "", "NaN": "", "None": "", "none": "", "": ""}
+            )
+            col_lower = col.str.lower()
+            mapped = col_lower.map(
+                {
+                    "sim": "Sim",
+                    "x": "Sim",
+                    "1": "Sim",
+                    "true": "Sim",
+                    "não": "Não",
+                    "nao": "Não",
+                    "n": "Não",
+                    "0": "Não",
+                    "false": "Não",
+                }
+            )
+            out[c] = mapped.fillna(col)
     return out
 
 med_df = load_medicos_from_excel(excel)
@@ -902,6 +990,8 @@ med_df = load_medicos_from_excel(excel)
 st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
 
 med_enriched = pd.DataFrame()
+consultorio_medico_agg = pd.DataFrame()
+consultorio_totais = pd.DataFrame()
 
 if med_df.empty:
     st.warning("Não foram encontradas abas de **MÉDICOS** no arquivo. Os indicadores de plano/aluguel ficarão ocultos.")
@@ -910,6 +1000,41 @@ else:
     usos = fdf_base.groupby("Médico").size().reset_index(name="Turnos Utilizados")
     med_enriched = med_df.merge(usos, on="Médico", how="left")
 
+    if "Consultório" in med_enriched.columns and "Médico" in med_enriched.columns:
+        group_cols = ["Consultório", "Médico"]
+        agg_dict = {"Profissionais": ("Médico", "nunique")}
+        if "Valor Aluguel" in med_enriched.columns:
+            agg_dict["Valor Aluguel Total"] = ("Valor Aluguel", "sum")
+        consultorio_medico_agg = (
+            med_enriched.groupby(group_cols, dropna=False)
+            .agg(**agg_dict)
+            .reset_index()
+        )
+        consultorio_medico_agg["Consultório"] = consultorio_medico_agg["Consultório"].fillna("Não informado")
+        if "Valor Aluguel Total" in consultorio_medico_agg.columns:
+            consultorio_medico_agg["Valor Aluguel Total"] = consultorio_medico_agg[
+                "Valor Aluguel Total"
+            ].fillna(0)
+
+        agg_totais = {"Profissionais": ("Médico", "nunique")}
+        if "Valor Aluguel" in med_enriched.columns:
+            agg_totais["Valor Aluguel Total"] = ("Valor Aluguel", "sum")
+        consultorio_totais = (
+            med_enriched.groupby("Consultório", dropna=False)
+            .agg(**agg_totais)
+            .reset_index()
+        )
+        consultorio_totais["Consultório"] = consultorio_totais["Consultório"].fillna("Não informado")
+        if "Valor Aluguel Total" in consultorio_totais.columns:
+            consultorio_totais["Valor Aluguel Total"] = consultorio_totais[
+                "Valor Aluguel Total"
+            ].fillna(0)
+        consultorio_totais = consultorio_totais.sort_values(
+            ["Valor Aluguel Total", "Profissionais"],
+            ascending=[False, False],
+            na_position="last",
+        )
+
     with st.container():
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<h2 class="section-title">💼 Indicador: PLANOS × Aluguel × Profissionais</h2>', unsafe_allow_html=True)
@@ -917,14 +1042,37 @@ else:
         # KPIs deste bloco
         tot_prof = med_enriched["Médico"].nunique()
         categorias_planos = med_enriched["Planos"].nunique() if "Planos" in med_enriched.columns else 0
-        cpa, cpb, cpc = st.columns(3)
+        total_consultorios = (
+            med_enriched["Consultório"].nunique()
+            if "Consultório" in med_enriched.columns
+            else 0
+        )
+        valor_total_aluguel = (
+            med_enriched["Valor Aluguel"].sum(min_count=1)
+            if "Valor Aluguel" in med_enriched.columns
+            else pd.NA
+        )
+        cpa, cpb, cpc, cpd, cpe = st.columns(5)
         cpa.metric("Profissionais (total)", tot_prof)
-        cpb.metric("Categorias em PLANOS", categorias_planos)
+        cpb.metric("Consultórios (total)", total_consultorios if total_consultorios else "—")
+        cpc.metric("Categorias em PLANOS", categorias_planos)
         if "Valor Aluguel" in med_enriched.columns:
             media_valor = med_enriched["Valor Aluguel"].dropna().mean()
-            cpc.metric("Valor médio de aluguel (R$)", f"{media_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X","."))
+            valor_total_formatado = (
+                f"{valor_total_aluguel:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                if pd.notna(valor_total_aluguel)
+                else "—"
+            )
+            cpd.metric("Valor total de aluguel (R$)", valor_total_formatado)
+            media_formatada = (
+                f"{media_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                if pd.notna(media_valor)
+                else "—"
+            )
+            cpe.metric("Valor médio de aluguel (R$)", media_formatada)
         else:
-            cpc.metric("Valor médio de aluguel (R$)", "—")
+            cpd.metric("Valor total de aluguel (R$)", "—")
+            cpe.metric("Valor médio de aluguel (R$)", "—")
 
         g1, g2 = st.columns(2)
         with g1:
@@ -976,6 +1124,58 @@ else:
             else:
                 st.info("Inclua 'Especialidade' e 'PLANOS'.")
 
+        st.markdown("##### Indicadores por consultório")
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            if not consultorio_totais.empty and "Valor Aluguel Total" in consultorio_totais.columns:
+                fig_cons_valor = px.bar(
+                    consultorio_totais,
+                    x="Consultório",
+                    y="Valor Aluguel Total",
+                    title="Valor total de aluguel por consultório",
+                    text="Valor Aluguel Total",
+                )
+                fig_cons_valor.update_traces(
+                    texttemplate="R$ %{y:,.2f}",
+                    textposition="outside",
+                )
+                fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
+                st.plotly_chart(fig_cons_valor, use_container_width=True)
+            else:
+                st.info("Inclua 'Consultório' e 'Valor Aluguel' para visualizar os totais.")
+        with gc2:
+            if not consultorio_totais.empty:
+                fig_cons_prof = px.bar(
+                    consultorio_totais,
+                    x="Consultório",
+                    y="Profissionais",
+                    title="Profissionais por consultório",
+                    text="Profissionais",
+                )
+                fig_cons_prof.update_traces(textposition="outside")
+                st.plotly_chart(fig_cons_prof, use_container_width=True)
+            else:
+                st.info("Inclua 'Consultório' para visualizar a distribuição de profissionais.")
+
+        if not consultorio_medico_agg.empty:
+            st.markdown("##### Tabela por consultório × médico")
+            display_cols = [
+                c
+                for c in [
+                    "Consultório",
+                    "Médico",
+                    "Profissionais",
+                    "Valor Aluguel Total",
+                ]
+                if c in consultorio_medico_agg.columns
+            ]
+            st.dataframe(
+                consultorio_medico_agg[display_cols].sort_values(
+                    ["Consultório", "Médico"], na_position="last"
+                ),
+                use_container_width=True,
+            )
+
         g5, g6 = st.columns(2)
         with g5:
             if "Sala Exclusiva" in med_enriched.columns or "Sala Dividida" in med_enriched.columns:
@@ -997,8 +1197,30 @@ else:
                 st.info("Inclua colunas 'Sala Exclusiva' e/ou 'Sala Dividida'.")
 
         st.markdown("##### Tabela (Médico × CRM × Especialidade × PLANOS × Valor × Tipo de Sala × Turnos)")
-        cols_show = [c for c in ["Médico","CRM","Especialidade","Planos","Valor Aluguel","Sala Exclusiva","Sala Dividida","Turnos Utilizados"] if c in med_enriched.columns]
-        st.dataframe(med_enriched[cols_show].sort_values(["Planos","Especialidade","Valor Aluguel","Médico"], na_position="last"), use_container_width=True)
+        cols_show = [
+            c
+            for c in [
+                "Médico",
+                "Consultório",
+                "CRM",
+                "Especialidade",
+                "Planos",
+                "Valor Aluguel",
+                "Sala Exclusiva",
+                "Sala Dividida",
+                "Turnos Utilizados",
+            ]
+            if c in med_enriched.columns
+        ]
+        sort_cols = [
+            c
+            for c in ["Planos", "Consultório", "Especialidade", "Valor Aluguel", "Médico"]
+            if c in med_enriched.columns
+        ]
+        st.dataframe(
+            med_enriched[cols_show].sort_values(sort_cols, na_position="last") if sort_cols else med_enriched[cols_show],
+            use_container_width=True,
+        )
 
         st.markdown('</div>', unsafe_allow_html=True)
 
