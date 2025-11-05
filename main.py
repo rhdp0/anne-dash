@@ -216,7 +216,11 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
 
             for col in ["Exames Solicitados", "Cirurgias Solicitadas"]:
                 if col in dfp.columns:
-                    dfp[col] = dfp[col].apply(_to_number)
+                    dfp[col] = dfp[col].apply(
+                        lambda value: 0
+                        if (pd.isna(value) or str(value).strip() == "")
+                        else _to_number(value)
+                    )
                 else:
                     dfp[col] = 0
                 dfp[col] = pd.to_numeric(dfp[col], errors="coerce").fillna(0)
