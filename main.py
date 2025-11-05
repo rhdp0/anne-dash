@@ -1,8 +1,13 @@
 import re
+from io import BytesIO
 from pathlib import Path
+from datetime import datetime
+import unicodedata
+
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+from fpdf import FPDF
 
 st.set_page_config(page_title="Dashboard Consultórios", layout="wide")
 
@@ -121,6 +126,211 @@ def _format_consultorio_label(name):
     label = re.sub(r"(?i)consult[óo]rio", "Consultório", label)
     label = re.sub(r"\s+", " ", label).strip(" -_:")
     return label or str(name).strip()
+
+
+def _sanitize_pdf_text(text: str) -> str:
+    """Remove acentuação incompatível e caracteres fora do conjunto latin-1."""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+
+    normalized = unicodedata.normalize("NFKD", text)
+    cleaned = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    # Substitui marcadores e aspas especiais por equivalentes simples
+    substitutions = {
+        "•": "-",
+        "–": "-",
+        "—": "-",
+        "“": '"',
+        "”": '"',
+        "’": "'",
+        "´": "'",
+        "`": "'",
+        "ª": "a",
+        "º": "o",
+    }
+    for old, new in substitutions.items():
+        cleaned = cleaned.replace(old, new)
+
+    cleaned = cleaned.replace("\xa0", " ")
+
+    lines = []
+    for line in cleaned.splitlines():
+        collapsed = re.sub(r"\s+", " ", line).strip()
+        lines.append(collapsed)
+    cleaned = "\n".join(lines).strip()
+
+    # Mantém apenas caracteres suportados pelo encoding padrão do FPDF (latin-1)
+    cleaned = cleaned.encode("latin-1", "ignore").decode("latin-1")
+    return cleaned
+
+
+def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
+    pdf = FPDF()
+    pdf.set_left_margin(15)
+    pdf.set_right_margin(15)
+    pdf.set_top_margin(15)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    effective_width = pdf.w - pdf.l_margin - pdf.r_margin
+
+    def _write_line(text: str, height: float = 6):
+        sanitized = _sanitize_pdf_text(text)
+        if sanitized:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(effective_width, height, sanitized)
+        else:
+            pdf.ln(height)
+
+    def _safe_int(value):
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except TypeError:
+            pass
+        try:
+            return int(float(value))
+        except (ValueError, TypeError):
+            return None
+
+    pdf.set_font("Helvetica", "B", 16)
+    _write_line("Relatorio Completo - Dashboard de Consultorios", height=10)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, _sanitize_pdf_text(f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), ln=1)
+    pdf.ln(4)
+
+    if summary_metrics:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize_pdf_text("Resumo dos principais indicadores"), ln=1)
+        pdf.set_font("Helvetica", "", 11)
+        for key, value in summary_metrics.items():
+            _write_line(f"{key}: {value}")
+        pdf.ln(2)
+
+    if ranking_df is not None and not ranking_df.empty:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize_pdf_text("Top 10 profissionais por produtividade"), ln=1)
+        pdf.set_font("Helvetica", "", 11)
+        sort_cols = []
+        ascending = []
+        for col, asc in [
+            ("Total Procedimentos", False),
+            ("Cirurgias Solicitadas", False),
+            ("Exames Solicitados", False),
+            ("Profissional", True),
+            ("Consultório", True),
+        ]:
+            if col in ranking_df.columns:
+                sort_cols.append(col)
+                ascending.append(asc)
+        if sort_cols:
+            ranking_sorted = ranking_df.sort_values(sort_cols, ascending=ascending)
+        else:
+            ranking_sorted = ranking_df
+        top_ranking = ranking_sorted.head(10).reset_index(drop=True)
+        for idx, row in top_ranking.iterrows():
+            prof = row.get("Profissional", "")
+            especialidade = row.get("Especialidade", "")
+            consultorio = row.get("Consultório", "")
+            crm = row.get("CRM", "")
+            total = _safe_int(row.get("Total Procedimentos"))
+            exames = _safe_int(row.get("Exames Solicitados"))
+            cirurgias = _safe_int(row.get("Cirurgias Solicitadas"))
+
+            total_txt = f"Total: {total}" if total is not None else ""
+            detalhes = []
+            if consultorio:
+                detalhes.append(f"Consultorio: {consultorio}")
+            if crm and str(crm).strip():
+                detalhes.append(f"CRM: {crm}")
+            if exames is not None:
+                detalhes.append(f"Exames: {exames}")
+            if cirurgias is not None:
+                detalhes.append(f"Cirurgias: {cirurgias}")
+            if total_txt:
+                detalhes.insert(0, total_txt)
+
+            titulo = f"{idx + 1}. {prof}" if prof else f"{idx + 1}. Profissional"
+            if especialidade and especialidade != "Não informada":
+                titulo = f"{titulo} - {especialidade}"
+
+            _write_line(titulo)
+            if detalhes:
+                _write_line("; ".join(detalhes), height=5)
+            pdf.ln(1)
+        pdf.ln(2)
+
+    if med_df is not None and not med_df.empty:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize_pdf_text("Planos, aluguel e profissionais"), ln=1)
+        pdf.set_font("Helvetica", "", 11)
+        total_profissionais = (
+            med_df["Médico"].nunique() if "Médico" in med_df.columns else len(med_df)
+        )
+        _write_line(f"Profissionais analisados: {total_profissionais}")
+
+        if "Planos" in med_df.columns:
+            planos = med_df.copy()
+            planos["Planos"] = planos["Planos"].fillna("Nao informado").astype(str).str.strip()
+            if "Médico" in planos.columns:
+                planos_grouped = planos.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
+            else:
+                planos_grouped = planos["Planos"].value_counts().reset_index()
+                planos_grouped.columns = ["Planos", "Profissionais"]
+            planos_grouped = planos_grouped.sort_values("Profissionais", ascending=False)
+            _write_line("Distribuicao por PLANOS:")
+            for _, row in planos_grouped.head(5).iterrows():
+                plano_nome = row.get("Planos", "Nao informado")
+                qtd = _safe_int(row.get("Profissionais", 0)) or 0
+                _write_line(f"- {plano_nome}: {qtd} profissionais", height=5)
+
+        if "Valor Aluguel" in med_df.columns:
+            valores = pd.to_numeric(med_df["Valor Aluguel"], errors="coerce").dropna()
+            if not valores.empty:
+                media = valores.mean()
+                minimo = valores.min()
+                maximo = valores.max()
+                format_currency = lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                _write_line("Valores de aluguel (considerando dados disponiveis):")
+                _write_line(f"- Media: {format_currency(media)}", height=5)
+                _write_line(f"- Minimo: {format_currency(minimo)}", height=5)
+                _write_line(f"- Maximo: {format_currency(maximo)}", height=5)
+        pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, _sanitize_pdf_text("Agenda filtrada"), ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    if agenda_df is None or agenda_df.empty:
+        _write_line("Nenhum agendamento encontrado para os filtros atuais.")
+    else:
+        agenda_cols = [c for c in ["Sala", "Dia", "Turno", "Médico"] if c in agenda_df.columns]
+        agenda_view = agenda_df.copy()
+        if agenda_cols:
+            agenda_view = agenda_view[agenda_cols]
+        sort_cols = [c for c in ["Sala", "Dia", "Turno"] if c in agenda_view.columns]
+        if sort_cols:
+            agenda_view = agenda_view.sort_values(sort_cols)
+        _write_line("Primeiros 30 registros:")
+        for _, row in agenda_view.head(30).iterrows():
+            linha = " | ".join(str(row.get(col, "")) for col in agenda_cols)
+            _write_line(linha, height=5)
+
+    output = pdf.output(dest="S")
+    if isinstance(output, str):
+        output_bytes = output.encode("latin-1")
+    else:
+        output_bytes = bytes(output)
+    buffer = BytesIO()
+    buffer.write(output_bytes)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 def detect_header_and_parse(excel, sheet_name):
     for header in [0,1,2,3,4]:
@@ -354,6 +564,19 @@ ocupados = int(fdf_base["Ocupado"].sum())
 tx_ocup = (ocupados / total_slots * 100) if total_slots > 0 else 0
 slots_livres = max(total_slots - ocupados, 0)
 medicos_distintos = fdf_base.loc[fdf_base["Ocupado"], "Médico"].nunique()
+
+summary_metrics = {
+    "Consultórios selecionados": total_salas,
+    "Slots analisados": total_slots,
+    "Slots livres": slots_livres,
+    "Slots ocupados": ocupados,
+    "Taxa de ocupação": f"{tx_ocup:.1f}%",
+    "Médicos distintos": medicos_distintos,
+    "Dias filtrados": ", ".join(sel_dias) if sel_dias else "Todos",
+    "Turnos filtrados": ", ".join(sel_turnos) if sel_turnos else "Todos",
+}
+if sel_medicos:
+    summary_metrics["Médicos no filtro"] = len(sel_medicos)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Consultórios selecionados", total_salas)
@@ -678,6 +901,8 @@ med_df = load_medicos_from_excel(excel)
 
 st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
 
+med_enriched = pd.DataFrame()
+
 if med_df.empty:
     st.warning("Não foram encontradas abas de **MÉDICOS** no arquivo. Os indicadores de plano/aluguel ficarão ocultos.")
 else:
@@ -784,7 +1009,28 @@ st.dataframe(
     fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
     use_container_width=True
 )
+
+ranking_para_pdf = ranking_prod_total.copy()
+if not ranking_para_pdf.empty:
+    if sel_salas:
+        ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
+    if sel_medicos:
+        ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
+
+pdf_bytes = build_pdf_report(
+    summary_metrics,
+    ranking_para_pdf,
+    med_enriched if not med_df.empty else pd.DataFrame(),
+    fdf,
+)
+
 csv = fdf.to_csv(index=False).encode("utf-8-sig")
+st.download_button(
+    "📄 Baixar relatório completo (PDF)",
+    data=pdf_bytes,
+    file_name="dashboard_consultorios.pdf",
+    mime="application/pdf",
+)
 st.download_button("⬇️ Baixar dados filtrados (CSV)", data=csv, file_name="agenda_filtrada.csv", mime="text/csv")
 
 st.markdown(
