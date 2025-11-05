@@ -216,10 +216,21 @@ ranking_base = fdf[fdf["Ocupado"]].copy()
 if ranking_base.empty:
     st.info("Sem registros ocupados nos filtros atuais para gerar o ranking.")
 else:
+    def _consultorios_list(series):
+        values = [str(x).strip() for x in series if pd.notna(x) and str(x).strip()]
+        return sorted(set(values))
+
     ranking = (ranking_base.groupby("Médico")
-               .agg({"Turno": "count", "Sala": "nunique", "Dia": "nunique"})
-               .rename(columns={"Turno": "Turnos Utilizados", "Sala": "Consultórios distintos", "Dia": "Dias distintos"})
+               .agg({
+                   "Turno": "count",
+                   "Sala": _consultorios_list,
+                   "Dia": "nunique"
+               })
+               .rename(columns={"Turno": "Turnos Utilizados", "Dia": "Dias distintos"})
                .reset_index())
+    ranking["Consultórios distintos"] = ranking["Sala"].apply(len)
+    ranking["Consultórios lista"] = ranking["Sala"].apply(lambda lst: ", ".join(lst) if lst else "Sem consultório informado")
+    ranking = ranking.drop(columns=["Sala"])
     ranking = ranking.sort_values(["Turnos Utilizados", "Consultórios distintos", "Dias distintos", "Médico"],
                                   ascending=[False, False, False, True])
     ranking.insert(0, "Rank", range(1, len(ranking) + 1))
@@ -237,8 +248,9 @@ else:
             dias = int(row.get("Dias distintos", 0))
             medico = row.get("Médico", "")
             rank = row.get("Rank", "-")
+            consultorio_label = row.get("Consultórios lista", "")
             col.metric(
-                f"{rank}º {medico}",
+                f"{rank}º {medico} ({consultorio_label})" if consultorio_label else f"{rank}º {medico}",
                 f"{turnos} turno(s)",
                 f"{consultorios} consultório(s) • {dias} dia(s)"
             )
@@ -309,6 +321,37 @@ else:
         ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
         ic6.metric("Médicos distintos no consultório", medicos_ind)
 
+        ranking_ind_base = detalhe_df[detalhe_df["Ocupado"]].copy()
+        ranking_ind = pd.DataFrame()
+        if ranking_ind_base.empty:
+            st.info("Sem registros ocupados para montar o ranking deste consultório nos filtros atuais.")
+        else:
+            ranking_ind = (ranking_ind_base.groupby("Médico")
+                           .agg({
+                               "Turno": "count",
+                               "Dia": "nunique"
+                           })
+                           .rename(columns={"Turno": "Turnos Utilizados", "Dia": "Dias distintos"})
+                           .reset_index())
+            ranking_ind = ranking_ind.sort_values(["Turnos Utilizados", "Dias distintos", "Médico"],
+                                                  ascending=[False, False, True])
+            ranking_ind.insert(0, "Rank", range(1, len(ranking_ind) + 1))
+
+            destaque_ind = ranking_ind.head(3).to_dict("records")
+            if destaque_ind:
+                st.markdown("#### Destaques de produtividade no consultório")
+                destaque_cols_ind = st.columns(len(destaque_ind))
+                for col, row in zip(destaque_cols_ind, destaque_ind):
+                    turnos = int(row.get("Turnos Utilizados", 0))
+                    dias = int(row.get("Dias distintos", 0))
+                    medico = row.get("Médico", "")
+                    rank = row.get("Rank", "-")
+                    col.metric(
+                        f"{rank}º {medico} ({sala_detalhe})",
+                        f"{turnos} turno(s)",
+                        f"{dias} dia(s) atendido(s)"
+                    )
+
         graf1, graf2 = st.columns(2)
         with graf1:
             by_dia_ind = detalhe_base.groupby("Dia")["Ocupado"].mean().reset_index()
@@ -328,17 +371,14 @@ else:
             fig_ind_turno.update_yaxes(range=[0, 100])
             st.plotly_chart(fig_ind_turno, use_container_width=True)
 
-        top_med_ind = (detalhe_df[detalhe_df["Ocupado"]]
-                       .groupby("Médico")
-                       .size()
-                       .reset_index(name="Turnos Utilizados")
-                       .sort_values("Turnos Utilizados", ascending=False)
-                       .head(10))
+        top_med_ind = ranking_ind.head(10) if not ranking_ind.empty else pd.DataFrame(columns=["Médico", "Turnos Utilizados"])
         if not top_med_ind.empty:
             fig_top_ind = px.bar(top_med_ind, x="Turnos Utilizados", y="Médico", orientation="h",
                                  title=f"Top médicos no consultório {sala_detalhe}", text="Turnos Utilizados")
             fig_top_ind.update_traces(textposition="outside")
             st.plotly_chart(fig_top_ind, use_container_width=True)
+        elif ranking_ind_base.empty:
+            pass
         else:
             st.info("Sem ocupações de médicos no consultório selecionado para os filtros atuais.")
 
