@@ -424,26 +424,28 @@ else:
 
             col.metric(
                 titulo,
-                f"{total} procedimento(s)",
+                f"{total} Solicitações",
                 " • ".join(info_parts),
             )
 
     if not top_view.empty:
+        top_view_display = top_view.copy()
+        top_view_display["Total Solicitações"] = top_view_display["Total Procedimentos"]
         fig_rank = px.bar(
-            top_view,
-            x="Total Procedimentos",
+            top_view_display,
+            x="Total Solicitações",
             y="Etiqueta",
             orientation="h",
-            color="Total Procedimentos",
+            color="Total Solicitações",
             color_continuous_scale="Blues",
             title="Top profissionais por produtividade",
-            text="Total Procedimentos",
+            text="Total Solicitações",
         )
         fig_rank.update_layout(coloraxis_showscale=False)
         fig_rank.update_traces(
             texttemplate="%{text}",
             textposition="outside",
-            customdata=top_view[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
+            customdata=top_view_display[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
             hovertemplate=(
                 "%{customdata[0]}º %{y}<br>"
                 "Consultório: %{customdata[1]}<br>"
@@ -454,7 +456,7 @@ else:
         )
         fig_rank.update_yaxes(
             categoryorder="array",
-            categoryarray=top_view["Etiqueta"].tolist()[::-1],
+            categoryarray=top_view_display["Etiqueta"].tolist()[::-1],
         )
         st.plotly_chart(fig_rank, use_container_width=True)
 
@@ -539,7 +541,7 @@ else:
 
                         col.metric(
                             titulo_local,
-                            f"{total} procedimento(s)",
+                            f"{total} Solicitações",
                             " • ".join(delta_parts),
                         )
 
@@ -564,17 +566,19 @@ else:
 
         top_med_ind = ranking_ind.head(10) if not ranking_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
         if not top_med_ind.empty:
+            top_med_ind_display = top_med_ind.copy()
+            top_med_ind_display["Total Solicitações"] = top_med_ind_display["Total Procedimentos"]
             fig_top_ind = px.bar(
-                top_med_ind,
-                x="Total Procedimentos",
+                top_med_ind_display,
+                x="Total Solicitações",
                 y="EtiquetaLocal",
                 orientation="h",
                 title=f"Produtividade no consultório {sala_detalhe}",
-                text="Total Procedimentos",
+                text="Total Solicitações",
             )
             fig_top_ind.update_traces(
                 textposition="outside",
-                customdata=top_med_ind[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                customdata=top_med_ind_display[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
                 hovertemplate=(
                     "%{customdata[0]}º %{y}<br>"
                     "Exames solicitados: %{customdata[1]}<br>"
@@ -583,7 +587,7 @@ else:
             )
             fig_top_ind.update_yaxes(
                 categoryorder="array",
-                categoryarray=top_med_ind["EtiquetaLocal"].tolist()[::-1],
+                categoryarray=top_med_ind_display["EtiquetaLocal"].tolist()[::-1],
             )
             st.plotly_chart(fig_top_ind, use_container_width=True)
 
