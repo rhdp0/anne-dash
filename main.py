@@ -1202,22 +1202,38 @@ else:
                     ["Consultório", "Planos"],
                     ascending=[True, True],
                 )
-                fig_cons_planos = px.bar(
-                    planos_ord,
-                    x="Consultório",
-                    y="Profissionais",
-                    color="Planos",
-                    barmode="stack",
-                    title="Distribuição de convênios por consultório",
-                    text="Profissionais",
-                )
-                fig_cons_planos.update_traces(textposition="inside")
-                fig_cons_planos.update_layout(
-                    xaxis_title="Consultório",
-                    yaxis_title="Profissionais",
-                    legend_title_text="Plano",
-                )
-                st.plotly_chart(fig_cons_planos, use_container_width=True)
+                consultorios_ordenados = planos_ord["Consultório"].unique().tolist()
+                if not consultorios_ordenados:
+                    st.info("Nenhum consultório disponível para montar os gráficos de convênios.")
+                else:
+                    tab_labels = []
+                    for nome in consultorios_ordenados:
+                        if pd.isna(nome) or not str(nome).strip():
+                            tab_labels.append("Não informado")
+                        else:
+                            tab_labels.append(str(nome))
+                    tabs = st.tabs(tab_labels)
+                    for tab, consultorio_nome, display_nome in zip(tabs, consultorios_ordenados, tab_labels):
+                        with tab:
+                            if pd.isna(consultorio_nome):
+                                dados_cons = planos_ord[planos_ord["Consultório"].isna()]
+                            else:
+                                dados_cons = planos_ord[planos_ord["Consultório"] == consultorio_nome]
+                            fig_cons_planos = px.bar(
+                                dados_cons,
+                                x="Planos",
+                                y="Profissionais",
+                                color="Planos",
+                                title=f"Convênios atendidos no {display_nome}",
+                                text="Profissionais",
+                            )
+                            fig_cons_planos.update_traces(textposition="outside")
+                            fig_cons_planos.update_layout(
+                                xaxis_title="Convênio",
+                                yaxis_title="Profissionais",
+                                showlegend=False,
+                            )
+                            st.plotly_chart(fig_cons_planos, use_container_width=True)
             with gp2:
                 pivot_planos = (
                     consultorio_planos.pivot_table(
