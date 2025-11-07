@@ -74,16 +74,7 @@ else:
     st.stop()
 
 st.sidebar.success(f"Usando dados de: {fonte}")
-st.sidebar.markdown("### Navegação")
-st.sidebar.markdown(
-    """
-    <a href="#ranking">🏆 Ranking</a><br>
-    <a href="#consultorio">🔍 Consultórios</a><br>
-    <a href="#planos">💼 Planos &amp; Aluguel</a><br>
-    <a href="#agenda">📋 Agenda</a>
-    """,
-    unsafe_allow_html=True,
-)
+# A navegação por seções será configurada após os filtros.
 
 # ---------- Utilitários ----------
 def _normalize_col(col):
@@ -721,6 +712,21 @@ sel_dias = st.sidebar.multiselect("Dia(s)", dias, default=dias)
 sel_turnos = st.sidebar.multiselect("Turno(s)", turnos, default=turnos)
 sel_medicos = st.sidebar.multiselect("Médico(s)", medicos, default=[], help="Deixe vazio para não filtrar por médico.")
 
+# Configuração das seções disponíveis no dashboard
+section_labels = (
+    "📊 Visão Geral",
+    "🏆 Ranking",
+    "🔍 Consultórios",
+    "💼 Planos & Aluguel",
+    "📋 Agenda",
+)
+selected_section = st.sidebar.radio(
+    "Ir para a seção",
+    section_labels,
+    index=0,
+    key="selected_section",
+)
+
 # Base para KPIs (NÃO filtra por médico)
 mask_base = (df["Sala"].isin(sel_salas) & df["Dia"].astype(str).isin(sel_dias) & df["Turno"].isin(sel_turnos))
 fdf_base = df[mask_base].copy()
@@ -830,110 +836,112 @@ if not ranking_prod_total.empty:
     if total_receita_geral > 0:
         summary_metrics["Receita total (produtividade)"] = format_currency_value(total_receita_geral)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Consultórios selecionados", total_salas)
-c2.metric("Slots (dia x turno x sala)", total_slots)
-c3.metric("Slots livres", slots_livres)
-c4.metric("Ocupados", ocupados)
+if selected_section == "📊 Visão Geral":
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Consultórios selecionados", total_salas)
+    c2.metric("Slots (dia x turno x sala)", total_slots)
+    c3.metric("Slots livres", slots_livres)
+    c4.metric("Ocupados", ocupados)
 
-kc1, kc2 = st.columns(2)
-kc1.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
-kc2.metric("Médicos distintos (no filtro de sala/dia/turno)", medicos_distintos)
+    kc1, kc2 = st.columns(2)
+    kc1.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
+    kc2.metric("Médicos distintos (no filtro de sala/dia/turno)", medicos_distintos)
 
-# ---------- Gráficos de ocupação (sem heatmap) com porcentagens nas barras ----------
-colA, colB = st.columns(2)
-with colA:
-    by_sala = fdf_base.groupby("Sala")["Ocupado"].mean().reset_index()
-    by_sala["Taxa de Ocupação (%)"] = (by_sala["Ocupado"]*100).round(1)
-    fig1 = px.bar(by_sala, x="Sala", y="Taxa de Ocupação (%)", title="Ocupação por Consultório (%)", text="Taxa de Ocupação (%)")
-    fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-    fig1.update_yaxes(range=[0,100])
-    st.plotly_chart(fig1, use_container_width=True)
+    # ---------- Gráficos de ocupação (sem heatmap) com porcentagens nas barras ----------
+    colA, colB = st.columns(2)
+    with colA:
+        by_sala = fdf_base.groupby("Sala")["Ocupado"].mean().reset_index()
+        by_sala["Taxa de Ocupação (%)"] = (by_sala["Ocupado"]*100).round(1)
+        fig1 = px.bar(by_sala, x="Sala", y="Taxa de Ocupação (%)", title="Ocupação por Consultório (%)", text="Taxa de Ocupação (%)")
+        fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig1.update_yaxes(range=[0,100])
+        st.plotly_chart(fig1, use_container_width=True)
 
-with colB:
-    by_dia = fdf_base.groupby("Dia")["Ocupado"].mean().reset_index()
-    by_dia["Taxa de Ocupação (%)"] = (by_dia["Ocupado"]*100).round(1)
-    fig2 = px.bar(by_dia, x="Dia", y="Taxa de Ocupação (%)", title="Ocupação por Dia da Semana (%)", text="Taxa de Ocupação (%)")
-    fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-    fig2.update_yaxes(range=[0,100])
-    st.plotly_chart(fig2, use_container_width=True)
+    with colB:
+        by_dia = fdf_base.groupby("Dia")["Ocupado"].mean().reset_index()
+        by_dia["Taxa de Ocupação (%)"] = (by_dia["Ocupado"]*100).round(1)
+        fig2 = px.bar(by_dia, x="Dia", y="Taxa de Ocupação (%)", title="Ocupação por Dia da Semana (%)", text="Taxa de Ocupação (%)")
+        fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig2.update_yaxes(range=[0,100])
+        st.plotly_chart(fig2, use_container_width=True)
 
-colC, colD = st.columns(2)
-with colC:
-    by_turno = fdf_base.groupby("Turno")["Ocupado"].mean().reset_index()
-    by_turno["Taxa de Ocupação (%)"] = (by_turno["Ocupado"]*100).round(1)
-    fig3 = px.bar(by_turno, x="Turno", y="Taxa de Ocupação (%)", title="Ocupação por Turno (%)", text="Taxa de Ocupação (%)")
-    fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-    fig3.update_yaxes(range=[0,100])
-    st.plotly_chart(fig3, use_container_width=True)
+    colC, colD = st.columns(2)
+    with colC:
+        by_turno = fdf_base.groupby("Turno")["Ocupado"].mean().reset_index()
+        by_turno["Taxa de Ocupação (%)"] = (by_turno["Ocupado"]*100).round(1)
+        fig3 = px.bar(by_turno, x="Turno", y="Taxa de Ocupação (%)", title="Ocupação por Turno (%)", text="Taxa de Ocupação (%)")
+        fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig3.update_yaxes(range=[0,100])
+        st.plotly_chart(fig3, use_container_width=True)
 
-with colD:
-    top_med = (fdf[fdf["Ocupado"]]
-               .groupby("Médico")
-               .size()
-               .reset_index(name="Turnos Utilizados")
-               .sort_values("Turnos Utilizados", ascending=False)
-               .head(15))
-    if not top_med.empty:
-        fig4 = px.bar(top_med, x="Turnos Utilizados", y="Médico", orientation="h", title="Top Médicos por Nº de Turnos", text="Turnos Utilizados")
-        fig4.update_traces(textposition="outside")
-        st.plotly_chart(fig4, use_container_width=True)
-    else:
-        st.info("Sem médicos ocupando slots nos filtros atuais.")
-
-# ---------- Ranking de produtividade dos médicos ----------
-st.markdown('<div id="ranking"></div>', unsafe_allow_html=True)
-with st.container():
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<h2 class="section-title">🏆 Ranking de produtividade dos médicos</h2>', unsafe_allow_html=True)
-
-    if ranking_prod_total.empty:
-        st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
-    else:
-        receita_total = ranking_prod_total["Receita"].sum()
-        col_receita_total, col_receita_medico, col_receita_consult = st.columns(3)
-        col_receita_total.metric(
-            "Receita total registrada",
-            format_currency_value(receita_total) if receita_total else "—",
-        )
-
-        if not receita_por_medico.empty:
-            top_medico_receita = receita_por_medico.iloc[0]
-            col_receita_medico.metric(
-                "Maior receita por médico",
-                format_currency_value(top_medico_receita["Receita Total"]),
-                top_medico_receita["Profissional"],
-            )
+    with colD:
+        top_med = (fdf[fdf["Ocupado"]]
+                   .groupby("Médico")
+                   .size()
+                   .reset_index(name="Turnos Utilizados")
+                   .sort_values("Turnos Utilizados", ascending=False)
+                   .head(15))
+        if not top_med.empty:
+            fig4 = px.bar(top_med, x="Turnos Utilizados", y="Médico", orientation="h", title="Top Médicos por Nº de Turnos", text="Turnos Utilizados")
+            fig4.update_traces(textposition="outside")
+            st.plotly_chart(fig4, use_container_width=True)
         else:
-            col_receita_medico.metric("Maior receita por médico", "—", "Sem dados")
+            st.info("Sem médicos ocupando slots nos filtros atuais.")
 
-        if not receita_por_consultorio.empty:
-            top_consult_receita = receita_por_consultorio.iloc[0]
-            col_receita_consult.metric(
-                "Maior receita por consultório",
-                format_currency_value(top_consult_receita["Receita Total"]),
-                top_consult_receita["Consultório"],
-            )
+if selected_section == "🏆 Ranking":
+    # ---------- Ranking de produtividade dos médicos ----------
+    st.markdown('<div id="ranking"></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-title">🏆 Ranking de produtividade dos médicos</h2>', unsafe_allow_html=True)
+
+        if ranking_prod_total.empty:
+            st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
         else:
-            col_receita_consult.metric("Maior receita por consultório", "—", "Sem dados")
+            receita_total = ranking_prod_total["Receita"].sum()
+            col_receita_total, col_receita_medico, col_receita_consult = st.columns(3)
+            col_receita_total.metric(
+                "Receita total registrada",
+                format_currency_value(receita_total) if receita_total else "—",
+            )
 
-        ranking_total = ranking_prod_total.sort_values(
-            ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional", "Consultório"],
-            ascending=[False, False, False, True, True],
-        ).reset_index(drop=True)
-        ranking_total.insert(0, "Rank", range(1, len(ranking_total) + 1))
+            if not receita_por_medico.empty:
+                top_medico_receita = receita_por_medico.iloc[0]
+                col_receita_medico.metric(
+                    "Maior receita por médico",
+                    format_currency_value(top_medico_receita["Receita Total"]),
+                    top_medico_receita["Profissional"],
+                )
+            else:
+                col_receita_medico.metric("Maior receita por médico", "—", "Sem dados")
 
-        ranking_exames = ranking_prod_total.sort_values(
-            ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional", "Consultório"],
-            ascending=[False, False, False, True, True],
-        ).reset_index(drop=True)
-        ranking_exames.insert(0, "Rank", range(1, len(ranking_exames) + 1))
+            if not receita_por_consultorio.empty:
+                top_consult_receita = receita_por_consultorio.iloc[0]
+                col_receita_consult.metric(
+                    "Maior receita por consultório",
+                    format_currency_value(top_consult_receita["Receita Total"]),
+                    top_consult_receita["Consultório"],
+                )
+            else:
+                col_receita_consult.metric("Maior receita por consultório", "—", "Sem dados")
 
-        ranking_cirurgias = ranking_prod_total.sort_values(
-            ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional", "Consultório"],
-            ascending=[False, False, False, True, True],
-        ).reset_index(drop=True)
-        ranking_cirurgias.insert(0, "Rank", range(1, len(ranking_cirurgias) + 1))
+            ranking_total = ranking_prod_total.sort_values(
+                ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional", "Consultório"],
+                ascending=[False, False, False, True, True],
+            ).reset_index(drop=True)
+            ranking_total.insert(0, "Rank", range(1, len(ranking_total) + 1))
+
+            ranking_exames = ranking_prod_total.sort_values(
+                ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional", "Consultório"],
+                ascending=[False, False, False, True, True],
+            ).reset_index(drop=True)
+            ranking_exames.insert(0, "Rank", range(1, len(ranking_exames) + 1))
+
+            ranking_cirurgias = ranking_prod_total.sort_values(
+                ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional", "Consultório"],
+                ascending=[False, False, False, True, True],
+            ).reset_index(drop=True)
+            ranking_cirurgias.insert(0, "Rank", range(1, len(ranking_cirurgias) + 1))
 
         ranking_receita = ranking_prod_total.sort_values(
             ["Receita", "Total Procedimentos", "Profissional", "Consultório"],
@@ -1156,353 +1164,354 @@ with st.container():
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Visão individual por consultório ----------
-st.markdown('<div id="consultorio"></div>', unsafe_allow_html=True)
-with st.container():
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<h2 class="section-title">🔍 Indicadores individuais por consultório</h2>', unsafe_allow_html=True)
+if selected_section == "🔍 Consultórios":
+    # ---------- Visão individual por consultório ----------
+    st.markdown('<div id="consultorio"></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-title">🔍 Indicadores individuais por consultório</h2>', unsafe_allow_html=True)
 
-    salas_disponiveis = sorted(df["Sala"].dropna().unique().tolist())
-    if not salas_disponiveis:
-        st.info("Não há consultórios disponíveis para detalhar.")
-    else:
-        sala_detalhe = st.selectbox("Escolha um consultório para detalhar", salas_disponiveis, key="detalhe_sala")
-
-        mask_sala_base = ((df["Sala"] == sala_detalhe)
-                          & df["Dia"].astype(str).isin(sel_dias)
-                          & df["Turno"].isin(sel_turnos))
-        mask_sala = mask_sala_base & mask_medico
-
-        detalhe_base = df[mask_sala_base].copy()
-        detalhe_df = df[mask_sala].copy()
-
-        if detalhe_base.empty:
-            st.info("Sem dados para o consultório selecionado com os filtros atuais de dia/turno.")
+        salas_disponiveis = sorted(df["Sala"].dropna().unique().tolist())
+        if not salas_disponiveis:
+            st.info("Não há consultórios disponíveis para detalhar.")
         else:
-            slots_totais = len(detalhe_base)
-            ocupados_ind = int(detalhe_base["Ocupado"].sum())
-            livres_ind = max(slots_totais - ocupados_ind, 0)
-            taxa_ind = (ocupados_ind / slots_totais * 100) if slots_totais > 0 else 0
-            medicos_ind = detalhe_base.loc[detalhe_base["Ocupado"], "Médico"].nunique()
+            sala_detalhe = st.selectbox("Escolha um consultório para detalhar", salas_disponiveis, key="detalhe_sala")
 
-            ic1, ic2, ic3, ic4 = st.columns(4)
-            ic1.metric("Consultório", sala_detalhe)
-            ic2.metric("Slots do consultório", slots_totais)
-            ic3.metric("Slots livres", livres_ind)
-            ic4.metric("Ocupados", ocupados_ind)
+            mask_sala_base = ((df["Sala"] == sala_detalhe)
+                              & df["Dia"].astype(str).isin(sel_dias)
+                              & df["Turno"].isin(sel_turnos))
+            mask_sala = mask_sala_base & mask_medico
 
-            ic5, ic6 = st.columns(2)
-            ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
-            ic6.metric("Médicos distintos no consultório", medicos_ind)
+            detalhe_base = df[mask_sala_base].copy()
+            detalhe_df = df[mask_sala].copy()
 
-            ranking_ind_total = pd.DataFrame()
-            ranking_ind_exames = pd.DataFrame()
-            ranking_ind_cirurgias = pd.DataFrame()
-            empty_ind_cols = [
-                "Profissional",
-                "Especialidade",
-                "Consultório",
-                "CRM",
-                "Total Procedimentos",
-                "Exames Solicitados",
-                "Cirurgias Solicitadas",
-                "Receita",
-                "EtiquetaLocal",
-                "Rank",
-            ]
-            top_total_ind = pd.DataFrame(columns=empty_ind_cols)
-            top_exames_ind = pd.DataFrame(columns=empty_ind_cols)
-            top_cirurgias_ind = pd.DataFrame(columns=empty_ind_cols)
-            top_receita_ind = pd.DataFrame(columns=empty_ind_cols)
-            sala_norm = _normalize_col(sala_detalhe)
-            if ranking_prod_total.empty:
-                st.info("Sem dados de produtividade carregados para detalhar este consultório.")
+            if detalhe_base.empty:
+                st.info("Sem dados para o consultório selecionado com os filtros atuais de dia/turno.")
             else:
-                ranking_ind_base = ranking_prod_total[ranking_prod_total["SalaNorm"] == sala_norm].copy()
-                if ranking_ind_base.empty:
-                    st.info("Sem registros de produtividade para o consultório selecionado.")
+                slots_totais = len(detalhe_base)
+                ocupados_ind = int(detalhe_base["Ocupado"].sum())
+                livres_ind = max(slots_totais - ocupados_ind, 0)
+                taxa_ind = (ocupados_ind / slots_totais * 100) if slots_totais > 0 else 0
+                medicos_ind = detalhe_base.loc[detalhe_base["Ocupado"], "Médico"].nunique()
+
+                ic1, ic2, ic3, ic4 = st.columns(4)
+                ic1.metric("Consultório", sala_detalhe)
+                ic2.metric("Slots do consultório", slots_totais)
+                ic3.metric("Slots livres", livres_ind)
+                ic4.metric("Ocupados", ocupados_ind)
+
+                ic5, ic6 = st.columns(2)
+                ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
+                ic6.metric("Médicos distintos no consultório", medicos_ind)
+
+                ranking_ind_total = pd.DataFrame()
+                ranking_ind_exames = pd.DataFrame()
+                ranking_ind_cirurgias = pd.DataFrame()
+                empty_ind_cols = [
+                    "Profissional",
+                    "Especialidade",
+                    "Consultório",
+                    "CRM",
+                    "Total Procedimentos",
+                    "Exames Solicitados",
+                    "Cirurgias Solicitadas",
+                    "Receita",
+                    "EtiquetaLocal",
+                    "Rank",
+                ]
+                top_total_ind = pd.DataFrame(columns=empty_ind_cols)
+                top_exames_ind = pd.DataFrame(columns=empty_ind_cols)
+                top_cirurgias_ind = pd.DataFrame(columns=empty_ind_cols)
+                top_receita_ind = pd.DataFrame(columns=empty_ind_cols)
+                sala_norm = _normalize_col(sala_detalhe)
+                if ranking_prod_total.empty:
+                    st.info("Sem dados de produtividade carregados para detalhar este consultório.")
                 else:
-                    receita_total_consultorio = ranking_ind_base["Receita"].sum()
-                    receita_media_profissional = 0.0
-                    if not ranking_ind_base.empty:
-                        receita_media_profissional = (
-                            ranking_ind_base.groupby("Profissional")["Receita"].sum().mean()
-                        ) or 0.0
-                    ic7, ic8 = st.columns(2)
-                    ic7.metric(
-                        "Receita total no consultório",
-                        format_currency_value(receita_total_consultorio),
-                    )
-                    ic8.metric(
-                        "Receita média por médico",
-                        format_currency_value(receita_media_profissional)
-                        if not pd.isna(receita_media_profissional)
-                        else "—",
-                    )
+                    ranking_ind_base = ranking_prod_total[ranking_prod_total["SalaNorm"] == sala_norm].copy()
+                    if ranking_ind_base.empty:
+                        st.info("Sem registros de produtividade para o consultório selecionado.")
+                    else:
+                        receita_total_consultorio = ranking_ind_base["Receita"].sum()
+                        receita_media_profissional = 0.0
+                        if not ranking_ind_base.empty:
+                            receita_media_profissional = (
+                                ranking_ind_base.groupby("Profissional")["Receita"].sum().mean()
+                            ) or 0.0
+                        ic7, ic8 = st.columns(2)
+                        ic7.metric(
+                            "Receita total no consultório",
+                            format_currency_value(receita_total_consultorio),
+                        )
+                        ic8.metric(
+                            "Receita média por médico",
+                            format_currency_value(receita_media_profissional)
+                            if not pd.isna(receita_media_profissional)
+                            else "—",
+                        )
 
-                    ranking_ind_total = ranking_ind_base.sort_values(
-                        ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional"],
-                        ascending=[False, False, False, True],
-                    ).reset_index(drop=True)
-                    ranking_ind_total.insert(0, "Rank", range(1, len(ranking_ind_total) + 1))
-                    ranking_ind_total["EtiquetaLocal"] = ranking_ind_total.apply(
-                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
-                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
-                        else r.get("Profissional", ""),
-                        axis=1,
-                    )
+                        ranking_ind_total = ranking_ind_base.sort_values(
+                            ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional"],
+                            ascending=[False, False, False, True],
+                        ).reset_index(drop=True)
+                        ranking_ind_total.insert(0, "Rank", range(1, len(ranking_ind_total) + 1))
+                        ranking_ind_total["EtiquetaLocal"] = ranking_ind_total.apply(
+                            lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                            if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                            else r.get("Profissional", ""),
+                            axis=1,
+                        )
 
-                    ranking_ind_exames = ranking_ind_base.sort_values(
-                        ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional"],
-                        ascending=[False, False, False, True],
-                    ).reset_index(drop=True)
-                    ranking_ind_exames.insert(0, "Rank", range(1, len(ranking_ind_exames) + 1))
-                    ranking_ind_exames["EtiquetaLocal"] = ranking_ind_exames.apply(
-                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
-                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
-                        else r.get("Profissional", ""),
-                        axis=1,
-                    )
+                        ranking_ind_exames = ranking_ind_base.sort_values(
+                            ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional"],
+                            ascending=[False, False, False, True],
+                        ).reset_index(drop=True)
+                        ranking_ind_exames.insert(0, "Rank", range(1, len(ranking_ind_exames) + 1))
+                        ranking_ind_exames["EtiquetaLocal"] = ranking_ind_exames.apply(
+                            lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                            if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                            else r.get("Profissional", ""),
+                            axis=1,
+                        )
 
-                    ranking_ind_cirurgias = ranking_ind_base.sort_values(
-                        ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional"],
-                        ascending=[False, False, False, True],
-                    ).reset_index(drop=True)
-                    ranking_ind_cirurgias.insert(0, "Rank", range(1, len(ranking_ind_cirurgias) + 1))
-                    ranking_ind_cirurgias["EtiquetaLocal"] = ranking_ind_cirurgias.apply(
-                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
-                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
-                        else r.get("Profissional", ""),
-                        axis=1,
-                    )
+                        ranking_ind_cirurgias = ranking_ind_base.sort_values(
+                            ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional"],
+                            ascending=[False, False, False, True],
+                        ).reset_index(drop=True)
+                        ranking_ind_cirurgias.insert(0, "Rank", range(1, len(ranking_ind_cirurgias) + 1))
+                        ranking_ind_cirurgias["EtiquetaLocal"] = ranking_ind_cirurgias.apply(
+                            lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                            if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                            else r.get("Profissional", ""),
+                            axis=1,
+                        )
 
-                    ranking_ind_receita = ranking_ind_base.sort_values(
-                        ["Receita", "Total Procedimentos", "Profissional"],
-                        ascending=[False, False, True],
-                    ).reset_index(drop=True)
-                    ranking_ind_receita.insert(0, "Rank", range(1, len(ranking_ind_receita) + 1))
-                    ranking_ind_receita["EtiquetaLocal"] = ranking_ind_receita.apply(
-                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
-                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
-                        else r.get("Profissional", ""),
-                        axis=1,
-                    )
+                        ranking_ind_receita = ranking_ind_base.sort_values(
+                            ["Receita", "Total Procedimentos", "Profissional"],
+                            ascending=[False, False, True],
+                        ).reset_index(drop=True)
+                        ranking_ind_receita.insert(0, "Rank", range(1, len(ranking_ind_receita) + 1))
+                        ranking_ind_receita["EtiquetaLocal"] = ranking_ind_receita.apply(
+                            lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                            if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                            else r.get("Profissional", ""),
+                            axis=1,
+                        )
 
-                    top_n_ind_default = min(len(ranking_ind_total), 10) if len(ranking_ind_total) else 1
-                    top_n_ind = st.slider(
-                        "Quantidade de profissionais no ranking do consultório",
-                        min_value=1,
-                        max_value=len(ranking_ind_total),
-                        value=top_n_ind_default,
-                        key=f"ranking_ind_top_{sala_norm}",
-                    )
+                        top_n_ind_default = min(len(ranking_ind_total), 10) if len(ranking_ind_total) else 1
+                        top_n_ind = st.slider(
+                            "Quantidade de profissionais no ranking do consultório",
+                            min_value=1,
+                            max_value=len(ranking_ind_total),
+                            value=top_n_ind_default,
+                            key=f"ranking_ind_top_{sala_norm}",
+                        )
 
-                    top_total_ind = ranking_ind_total.head(top_n_ind)
-                    top_exames_ind = ranking_ind_exames.head(top_n_ind)
-                    top_cirurgias_ind = ranking_ind_cirurgias.head(top_n_ind)
-                    top_receita_ind = ranking_ind_receita.head(top_n_ind)
+                        top_total_ind = ranking_ind_total.head(top_n_ind)
+                        top_exames_ind = ranking_ind_exames.head(top_n_ind)
+                        top_cirurgias_ind = ranking_ind_cirurgias.head(top_n_ind)
+                        top_receita_ind = ranking_ind_receita.head(top_n_ind)
 
-                    st.markdown("#### Destaques de produtividade no consultório")
-                    tabs_ind = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias", "Top Receita"])
+                        st.markdown("#### Destaques de produtividade no consultório")
+                        tabs_ind = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias", "Top Receita"])
 
-                    def _render_ind_highlights(dataset: pd.DataFrame) -> None:
-                        destaques = dataset.head(3).to_dict("records")
-                        if not destaques:
-                            st.info("Sem registros para os filtros atuais.")
-                            return
-                        destaque_cols_ind = st.columns(len(destaques))
-                        for col, row in zip(destaque_cols_ind, destaques):
-                            total = int(row.get("Total Procedimentos", 0))
-                            exames = int(row.get("Exames Solicitados", 0))
-                            cirurgias = int(row.get("Cirurgias Solicitadas", 0))
-                            receita_valor = float(row.get("Receita", 0) or 0)
-                            profissional = row.get("Profissional", "")
-                            especialidade = row.get("Especialidade", "")
-                            crm = row.get("CRM", "")
-                            rank = row.get("Rank", "-")
+                        def _render_ind_highlights(dataset: pd.DataFrame) -> None:
+                            destaques = dataset.head(3).to_dict("records")
+                            if not destaques:
+                                st.info("Sem registros para os filtros atuais.")
+                                return
+                            destaque_cols_ind = st.columns(len(destaques))
+                            for col, row in zip(destaque_cols_ind, destaques):
+                                total = int(row.get("Total Procedimentos", 0))
+                                exames = int(row.get("Exames Solicitados", 0))
+                                cirurgias = int(row.get("Cirurgias Solicitadas", 0))
+                                receita_valor = float(row.get("Receita", 0) or 0)
+                                profissional = row.get("Profissional", "")
+                                especialidade = row.get("Especialidade", "")
+                                crm = row.get("CRM", "")
+                                rank = row.get("Rank", "-")
 
-                            titulo_local = f"{rank}º {profissional}" if profissional else f"{rank}º Profissional"
-                            if especialidade and especialidade != "Não informada":
-                                titulo_local = f"{titulo_local} - {especialidade}"
+                                titulo_local = f"{rank}º {profissional}" if profissional else f"{rank}º Profissional"
+                                if especialidade and especialidade != "Não informada":
+                                    titulo_local = f"{titulo_local} - {especialidade}"
 
-                            delta_parts = [f"Exames: {exames}", f"Cirurgias: {cirurgias}"]
-                            if receita_valor:
-                                delta_parts.append(f"Receita: {format_currency_value(receita_valor)}")
-                            if crm:
-                                delta_parts.insert(0, f"CRM {crm}")
+                                delta_parts = [f"Exames: {exames}", f"Cirurgias: {cirurgias}"]
+                                if receita_valor:
+                                    delta_parts.append(f"Receita: {format_currency_value(receita_valor)}")
+                                if crm:
+                                    delta_parts.insert(0, f"CRM {crm}")
 
-                            metric_value = f"{total} Solicitações"
-                            if receita_valor:
-                                metric_value = format_currency_value(receita_valor)
-                                delta_parts.insert(0, f"Solicitações: {total}")
+                                metric_value = f"{total} Solicitações"
+                                if receita_valor:
+                                    metric_value = format_currency_value(receita_valor)
+                                    delta_parts.insert(0, f"Solicitações: {total}")
 
-                            col.metric(
-                                titulo_local,
-                                metric_value,
-                                " • ".join(delta_parts),
+                                col.metric(
+                                    titulo_local,
+                                    metric_value,
+                                    " • ".join(delta_parts),
+                                )
+
+                        def _render_ind_chart(
+                            dataset: pd.DataFrame,
+                            value_col: str,
+                            title: str,
+                            is_currency: bool = False,
+                        ) -> None:
+                            if dataset.empty:
+                                st.info("Sem registros para os filtros atuais.")
+                                return
+
+                            display_df = dataset.copy()
+                            display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
+                            if is_currency:
+                                display_df["__text"] = display_df[value_col].apply(format_currency_value)
+                            else:
+                                display_df[value_col] = display_df[value_col].round().astype(int)
+                                display_df["__text"] = display_df[value_col]
+                            fig = px.bar(
+                                display_df,
+                                x=value_col,
+                                y="EtiquetaLocal",
+                                orientation="h",
+                                title=title,
+                                text="__text",
+                            )
+                            if is_currency:
+                                fig.update_traces(
+                                    textposition="outside",
+                                    customdata=display_df[["Rank", "Total Procedimentos"]],
+                                    hovertemplate=(
+                                        "%{customdata[0]}º %{y}<br>"
+                                        "Receita: %{text}<br>"
+                                        "Total de procedimentos: %{customdata[1]}<extra></extra>"
+                                    ),
+                                )
+                            else:
+                                fig.update_traces(
+                                    textposition="outside",
+                                    customdata=display_df[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                                    hovertemplate=(
+                                        "%{customdata[0]}º %{y}<br>"
+                                        "Exames solicitados: %{customdata[1]}<br>"
+                                        "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
+                                    ),
+                                )
+                            fig.update_yaxes(
+                                categoryorder="array",
+                                categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+
+                        with tabs_ind[0]:
+                            _render_ind_highlights(top_total_ind)
+                            _render_ind_chart(
+                                top_total_ind.assign(**{"Total Solicitações": top_total_ind["Total Procedimentos"]}),
+                                "Total Solicitações",
+                                f"Produtividade no consultório {sala_detalhe}",
                             )
 
-                    def _render_ind_chart(
-                        dataset: pd.DataFrame,
-                        value_col: str,
-                        title: str,
-                        is_currency: bool = False,
-                    ) -> None:
-                        if dataset.empty:
-                            st.info("Sem registros para os filtros atuais.")
-                            return
-
-                        display_df = dataset.copy()
-                        display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
-                        if is_currency:
-                            display_df["__text"] = display_df[value_col].apply(format_currency_value)
-                        else:
-                            display_df[value_col] = display_df[value_col].round().astype(int)
-                            display_df["__text"] = display_df[value_col]
-                        fig = px.bar(
-                            display_df,
-                            x=value_col,
-                            y="EtiquetaLocal",
-                            orientation="h",
-                            title=title,
-                            text="__text",
-                        )
-                        if is_currency:
-                            fig.update_traces(
-                                textposition="outside",
-                                customdata=display_df[["Rank", "Total Procedimentos"]],
-                                hovertemplate=(
-                                    "%{customdata[0]}º %{y}<br>"
-                                    "Receita: %{text}<br>"
-                                    "Total de procedimentos: %{customdata[1]}<extra></extra>"
-                                ),
+                        with tabs_ind[1]:
+                            _render_ind_highlights(top_exames_ind)
+                            _render_ind_chart(
+                                top_exames_ind,
+                                "Exames Solicitados",
+                                f"Exames solicitados no consultório {sala_detalhe}",
                             )
-                        else:
-                            fig.update_traces(
-                                textposition="outside",
-                                customdata=display_df[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
-                                hovertemplate=(
-                                    "%{customdata[0]}º %{y}<br>"
-                                    "Exames solicitados: %{customdata[1]}<br>"
-                                    "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
-                                ),
+
+                        with tabs_ind[2]:
+                            _render_ind_highlights(top_cirurgias_ind)
+                            _render_ind_chart(
+                                top_cirurgias_ind,
+                                "Cirurgias Solicitadas",
+                                f"Cirurgias solicitadas no consultório {sala_detalhe}",
                             )
-                        fig.update_yaxes(
-                            categoryorder="array",
-                            categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
 
-                    with tabs_ind[0]:
-                        _render_ind_highlights(top_total_ind)
-                        _render_ind_chart(
-                            top_total_ind.assign(**{"Total Solicitações": top_total_ind["Total Procedimentos"]}),
-                            "Total Solicitações",
-                            f"Produtividade no consultório {sala_detalhe}",
-                        )
+                        with tabs_ind[3]:
+                            _render_ind_highlights(top_receita_ind)
+                            _render_ind_chart(
+                                top_receita_ind,
+                                "Receita",
+                                f"Receita no consultório {sala_detalhe}",
+                                is_currency=True,
+                            )
 
-                    with tabs_ind[1]:
-                        _render_ind_highlights(top_exames_ind)
-                        _render_ind_chart(
-                            top_exames_ind,
-                            "Exames Solicitados",
-                            f"Exames solicitados no consultório {sala_detalhe}",
-                        )
+                graf1, graf2 = st.columns(2)
+                with graf1:
+                    by_dia_ind = detalhe_base.groupby("Dia")["Ocupado"].mean().reset_index()
+                    by_dia_ind["Taxa de Ocupação (%)"] = (by_dia_ind["Ocupado"] * 100).round(1)
+                    fig_ind_dia = px.bar(by_dia_ind, x="Dia", y="Taxa de Ocupação (%)",
+                                         title=f"Ocupação por dia - {sala_detalhe}", text="Taxa de Ocupação (%)")
+                    fig_ind_dia.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+                    fig_ind_dia.update_yaxes(range=[0, 100])
+                    st.plotly_chart(fig_ind_dia, use_container_width=True)
 
-                    with tabs_ind[2]:
-                        _render_ind_highlights(top_cirurgias_ind)
-                        _render_ind_chart(
-                            top_cirurgias_ind,
-                            "Cirurgias Solicitadas",
-                            f"Cirurgias solicitadas no consultório {sala_detalhe}",
-                        )
+                with graf2:
+                    by_turno_ind = detalhe_base.groupby("Turno")["Ocupado"].mean().reset_index()
+                    by_turno_ind["Taxa de Ocupação (%)"] = (by_turno_ind["Ocupado"] * 100).round(1)
+                    fig_ind_turno = px.bar(by_turno_ind, x="Turno", y="Taxa de Ocupação (%)",
+                                           title=f"Ocupação por turno - {sala_detalhe}", text="Taxa de Ocupação (%)")
+                    fig_ind_turno.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+                    fig_ind_turno.update_yaxes(range=[0, 100])
+                    st.plotly_chart(fig_ind_turno, use_container_width=True)
 
-                    with tabs_ind[3]:
-                        _render_ind_highlights(top_receita_ind)
-                        _render_ind_chart(
-                            top_receita_ind,
-                            "Receita",
-                            f"Receita no consultório {sala_detalhe}",
-                            is_currency=True,
-                        )
-
-            graf1, graf2 = st.columns(2)
-            with graf1:
-                by_dia_ind = detalhe_base.groupby("Dia")["Ocupado"].mean().reset_index()
-                by_dia_ind["Taxa de Ocupação (%)"] = (by_dia_ind["Ocupado"] * 100).round(1)
-                fig_ind_dia = px.bar(by_dia_ind, x="Dia", y="Taxa de Ocupação (%)",
-                                     title=f"Ocupação por dia - {sala_detalhe}", text="Taxa de Ocupação (%)")
-                fig_ind_dia.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-                fig_ind_dia.update_yaxes(range=[0, 100])
-                st.plotly_chart(fig_ind_dia, use_container_width=True)
-
-            with graf2:
-                by_turno_ind = detalhe_base.groupby("Turno")["Ocupado"].mean().reset_index()
-                by_turno_ind["Taxa de Ocupação (%)"] = (by_turno_ind["Ocupado"] * 100).round(1)
-                fig_ind_turno = px.bar(by_turno_ind, x="Turno", y="Taxa de Ocupação (%)",
-                                       title=f"Ocupação por turno - {sala_detalhe}", text="Taxa de Ocupação (%)")
-                fig_ind_turno.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-                fig_ind_turno.update_yaxes(range=[0, 100])
-                st.plotly_chart(fig_ind_turno, use_container_width=True)
-
-            top_med_ind = (
-                top_total_ind if not top_total_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
-            )
-            if not top_med_ind.empty:
-                top_med_ind_display = top_med_ind.copy()
-                top_med_ind_display["Total Solicitações"] = top_med_ind_display["Total Procedimentos"]
-                fig_top_ind = px.bar(
-                    top_med_ind_display,
-                    x="Total Solicitações",
-                    y="EtiquetaLocal",
-                    orientation="h",
-                    title=f"Produtividade no consultório {sala_detalhe}",
-                    text="Total Solicitações",
+                top_med_ind = (
+                    top_total_ind if not top_total_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
                 )
-                fig_top_ind.update_traces(
-                    textposition="outside",
-                    customdata=top_med_ind_display[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
-                    hovertemplate=(
-                        "%{customdata[0]}º %{y}<br>"
-                        "Exames solicitados: %{customdata[1]}<br>"
-                        "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
-                    ),
-                )
-                fig_top_ind.update_yaxes(
-                    categoryorder="array",
-                    categoryarray=top_med_ind_display["EtiquetaLocal"].tolist()[::-1],
-                )
-                st.plotly_chart(fig_top_ind, use_container_width=True)
+                if not top_med_ind.empty:
+                    top_med_ind_display = top_med_ind.copy()
+                    top_med_ind_display["Total Solicitações"] = top_med_ind_display["Total Procedimentos"]
+                    fig_top_ind = px.bar(
+                        top_med_ind_display,
+                        x="Total Solicitações",
+                        y="EtiquetaLocal",
+                        orientation="h",
+                        title=f"Produtividade no consultório {sala_detalhe}",
+                        text="Total Solicitações",
+                    )
+                    fig_top_ind.update_traces(
+                        textposition="outside",
+                        customdata=top_med_ind_display[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                        hovertemplate=(
+                            "%{customdata[0]}º %{y}<br>"
+                            "Exames solicitados: %{customdata[1]}<br>"
+                            "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
+                        ),
+                    )
+                    fig_top_ind.update_yaxes(
+                        categoryorder="array",
+                        categoryarray=top_med_ind_display["EtiquetaLocal"].tolist()[::-1],
+                    )
+                    st.plotly_chart(fig_top_ind, use_container_width=True)
 
-            if not top_receita_ind.empty and top_receita_ind["Receita"].sum() > 0:
-                top_receita_display = top_receita_ind.copy()
-                top_receita_display["Receita Formatada"] = top_receita_display["Receita"].apply(
-                    format_currency_value
-                )
-                fig_top_receita = px.bar(
-                    top_receita_display,
-                    x="Receita",
-                    y="EtiquetaLocal",
-                    orientation="h",
-                    title=f"Receita no consultório {sala_detalhe}",
-                    text="Receita Formatada",
-                )
-                fig_top_receita.update_traces(
-                    textposition="outside",
-                    customdata=top_receita_display[["Rank", "Total Procedimentos"]],
-                    hovertemplate=(
-                        "%{customdata[0]}º %{y}<br>"
-                        "Receita: %{text}<br>"
-                        "Total de procedimentos: %{customdata[1]}<extra></extra>"
-                    ),
-                )
-                fig_top_receita.update_yaxes(
-                    categoryorder="array",
-                    categoryarray=top_receita_display["EtiquetaLocal"].tolist()[::-1],
-                )
-                st.plotly_chart(fig_top_receita, use_container_width=True)
+                if not top_receita_ind.empty and top_receita_ind["Receita"].sum() > 0:
+                    top_receita_display = top_receita_ind.copy()
+                    top_receita_display["Receita Formatada"] = top_receita_display["Receita"].apply(
+                        format_currency_value
+                    )
+                    fig_top_receita = px.bar(
+                        top_receita_display,
+                        x="Receita",
+                        y="EtiquetaLocal",
+                        orientation="h",
+                        title=f"Receita no consultório {sala_detalhe}",
+                        text="Receita Formatada",
+                    )
+                    fig_top_receita.update_traces(
+                        textposition="outside",
+                        customdata=top_receita_display[["Rank", "Total Procedimentos"]],
+                        hovertemplate=(
+                            "%{customdata[0]}º %{y}<br>"
+                            "Receita: %{text}<br>"
+                            "Total de procedimentos: %{customdata[1]}<extra></extra>"
+                        ),
+                    )
+                    fig_top_receita.update_yaxes(
+                        categoryorder="array",
+                        categoryarray=top_receita_display["EtiquetaLocal"].tolist()[::-1],
+                    )
+                    st.plotly_chart(fig_top_receita, use_container_width=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Integração das abas MÉDICOS (1, 2, 3...) ----------
 def load_medicos_from_excel(excel: pd.ExcelFile):
@@ -1615,15 +1624,14 @@ def load_medicos_from_excel(excel: pd.ExcelFile):
 
 med_df = load_medicos_from_excel(excel)
 
-st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
-
 med_enriched = pd.DataFrame()
 consultorio_medico_agg = pd.DataFrame()
 consultorio_totais = pd.DataFrame()
 consultorio_planos = pd.DataFrame()
+medicos_warning = None
 
 if med_df.empty:
-    st.warning("Não foram encontradas abas de **MÉDICOS** no arquivo. Os indicadores de plano/aluguel ficarão ocultos.")
+    medicos_warning = "Não foram encontradas abas de **MÉDICOS** no arquivo. Os indicadores de plano/aluguel ficarão ocultos."
 else:
     # Enriquecer com turnos utilizados
     usos = fdf_base.groupby("Médico").size().reset_index(name="Turnos Utilizados")
@@ -1689,297 +1697,304 @@ else:
                     na_position="last",
                 )
 
-    with st.container():
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<h2 class="section-title">💼 Indicador: PLANOS × Aluguel × Profissionais</h2>', unsafe_allow_html=True)
+if selected_section == "💼 Planos & Aluguel":
+    st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
+    if medicos_warning:
+        st.warning(medicos_warning)
+    else:
+        with st.container():
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-title">💼 Indicador: PLANOS × Aluguel × Profissionais</h2>', unsafe_allow_html=True)
 
-        # KPIs deste bloco
-        tot_prof = med_enriched["Médico"].nunique()
-        categorias_planos = med_enriched["Planos"].nunique() if "Planos" in med_enriched.columns else 0
-        total_consultorios = (
-            med_enriched["Consultório"].nunique()
-            if "Consultório" in med_enriched.columns
-            else 0
-        )
-        valor_total_aluguel = (
-            med_enriched["Valor Aluguel"].sum(min_count=1)
-            if "Valor Aluguel" in med_enriched.columns
-            else pd.NA
-        )
-        cpa, cpb, cpc, cpd, cpe = st.columns(5)
-        cpa.metric("Profissionais (total)", tot_prof)
-        cpb.metric("Consultórios (total)", total_consultorios if total_consultorios else "—")
-        cpc.metric("Categorias em PLANOS", categorias_planos)
-        if "Valor Aluguel" in med_enriched.columns:
-            media_valor = med_enriched["Valor Aluguel"].dropna().mean()
-            valor_total_formatado = (
-                f"{valor_total_aluguel:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                if pd.notna(valor_total_aluguel)
-                else "—"
+            # KPIs deste bloco
+            tot_prof = med_enriched["Médico"].nunique()
+            categorias_planos = med_enriched["Planos"].nunique() if "Planos" in med_enriched.columns else 0
+            total_consultorios = (
+                med_enriched["Consultório"].nunique()
+                if "Consultório" in med_enriched.columns
+                else 0
             )
-            cpd.metric("Valor total de aluguel (R$)", valor_total_formatado)
-            media_formatada = (
-                f"{media_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                if pd.notna(media_valor)
-                else "—"
+            valor_total_aluguel = (
+                med_enriched["Valor Aluguel"].sum(min_count=1)
+                if "Valor Aluguel" in med_enriched.columns
+                else pd.NA
             )
-            cpe.metric("Valor médio de aluguel (R$)", media_formatada)
-        else:
-            cpd.metric("Valor total de aluguel (R$)", "—")
-            cpe.metric("Valor médio de aluguel (R$)", "—")
-
-        g1, g2 = st.columns(2)
-        with g1:
-            if "Planos" in med_enriched.columns:
-                cont = med_enriched.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
-                fig7 = px.bar(cont, x="Planos", y="Profissionais", title="Profissionais por PLANOS", text="Profissionais")
-                fig7.update_traces(textposition="outside")
-                st.plotly_chart(fig7, use_container_width=True)
-            else:
-                st.info("Coluna PLANOS não encontrada.")
-
-        with g2:
-            if "Valor Aluguel" in med_enriched.columns and "Planos" in med_enriched.columns:
-                avgv = med_enriched.groupby("Planos")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)")
-                avgv["Valor médio (R$)"] = avgv["Valor médio (R$)"].round(2)
-                fig8 = px.bar(avgv, x="Planos", y="Valor médio (R$)", title="Valor médio de aluguel por PLANOS", text="Valor médio (R$)")
-                fig8.update_traces(texttemplate="R$ %{y:.2f}", textposition="outside")
-                st.plotly_chart(fig8, use_container_width=True)
-            else:
-                st.info("Inclua as colunas PLANOS e Valor Aluguel.")
-
-        if "Valor Aluguel" in med_enriched.columns:
-            st.markdown("##### Distribuição de profissionais por faixa de aluguel × PLANOS")
-            bins = [0,500,1000,1500,2000,3000,9999999]
-            labels = ["até 500","501–1000","1001–1500","1501–2000","2001–3000","3000+"]
-            med_enriched["Faixa Aluguel"] = pd.cut(med_enriched["Valor Aluguel"], bins=bins, labels=labels, include_lowest=True)
-            dist = med_enriched.groupby(["Planos","Faixa Aluguel"])["Médico"].nunique().reset_index(name="Profissionais")
-            fig9 = px.bar(dist, x="Faixa Aluguel", y="Profissionais", color="Planos", barmode="group",
-                          title="Profissionais por faixa de aluguel × PLANOS", text="Profissionais")
-            fig9.update_traces(textposition="outside")
-            st.plotly_chart(fig9, use_container_width=True)
-
-        g3, g4 = st.columns(2)
-        with g3:
-            if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
-                esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
-                fig10 = px.bar(esp_avg, x="Valor médio (R$)", y="Especialidade", orientation="h", title="Valor médio de aluguel por especialidade", text="Valor médio (R$)")
-                fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
-                st.plotly_chart(fig10, use_container_width=True)
-            else:
-                st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
-        with g4:
-            if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
-                plano_esp = med_enriched.groupby(["Especialidade","Planos"])["Médico"].nunique().reset_index(name="Profissionais")
-                fig11 = px.bar(plano_esp, x="Especialidade", y="Profissionais", color="Planos", barmode="group",
-                               title="Profissionais por especialidade × PLANOS", text="Profissionais")
-                fig11.update_traces(textposition="outside")
-                st.plotly_chart(fig11, use_container_width=True)
-            else:
-                st.info("Inclua 'Especialidade' e 'PLANOS'.")
-
-        st.markdown("##### Indicadores por consultório")
-
-        if not consultorio_planos.empty:
-            st.markdown("###### Convênios por consultório")
-            gp1, gp2 = st.columns((2, 1))
-            with gp1:
-                planos_ord = consultorio_planos.sort_values(
-                    ["Consultório", "Planos"],
-                    ascending=[True, True],
+            cpa, cpb, cpc, cpd, cpe = st.columns(5)
+            cpa.metric("Profissionais (total)", tot_prof)
+            cpb.metric("Consultórios (total)", total_consultorios if total_consultorios else "—")
+            cpc.metric("Categorias em PLANOS", categorias_planos)
+            if "Valor Aluguel" in med_enriched.columns:
+                media_valor = med_enriched["Valor Aluguel"].dropna().mean()
+                valor_total_formatado = (
+                    f"{valor_total_aluguel:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    if pd.notna(valor_total_aluguel)
+                    else "—"
                 )
-                consultorios_ordenados = planos_ord["Consultório"].unique().tolist()
-                if not consultorios_ordenados:
-                    st.info("Nenhum consultório disponível para montar os gráficos de convênios.")
+                cpd.metric("Valor total de aluguel (R$)", valor_total_formatado)
+                media_formatada = (
+                    f"{media_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    if pd.notna(media_valor)
+                    else "—"
+                )
+                cpe.metric("Valor médio de aluguel (R$)", media_formatada)
+            else:
+                cpd.metric("Valor total de aluguel (R$)", "—")
+                cpe.metric("Valor médio de aluguel (R$)", "—")
+
+            g1, g2 = st.columns(2)
+            with g1:
+                if "Planos" in med_enriched.columns:
+                    cont = med_enriched.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
+                    fig7 = px.bar(cont, x="Planos", y="Profissionais", title="Profissionais por PLANOS", text="Profissionais")
+                    fig7.update_traces(textposition="outside")
+                    st.plotly_chart(fig7, use_container_width=True)
                 else:
-                    tab_labels = []
-                    for nome in consultorios_ordenados:
-                        if pd.isna(nome) or not str(nome).strip():
-                            tab_labels.append("Não informado")
-                        else:
-                            tab_labels.append(str(nome))
-                    tabs = st.tabs(tab_labels)
-                    for tab, consultorio_nome, display_nome in zip(tabs, consultorios_ordenados, tab_labels):
-                        with tab:
-                            if pd.isna(consultorio_nome):
-                                dados_cons = planos_ord[planos_ord["Consultório"].isna()]
+                    st.info("Coluna PLANOS não encontrada.")
+
+            with g2:
+                if "Valor Aluguel" in med_enriched.columns and "Planos" in med_enriched.columns:
+                    avgv = med_enriched.groupby("Planos")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)")
+                    avgv["Valor médio (R$)"] = avgv["Valor médio (R$)"].round(2)
+                    fig8 = px.bar(avgv, x="Planos", y="Valor médio (R$)", title="Valor médio de aluguel por PLANOS", text="Valor médio (R$)")
+                    fig8.update_traces(texttemplate="R$ %{y:.2f}", textposition="outside")
+                    st.plotly_chart(fig8, use_container_width=True)
+                else:
+                    st.info("Inclua as colunas PLANOS e Valor Aluguel.")
+
+            if "Valor Aluguel" in med_enriched.columns:
+                st.markdown("##### Distribuição de profissionais por faixa de aluguel × PLANOS")
+                bins = [0,500,1000,1500,2000,3000,9999999]
+                labels = ["até 500","501–1000","1001–1500","1501–2000","2001–3000","3000+"]
+                med_enriched["Faixa Aluguel"] = pd.cut(med_enriched["Valor Aluguel"], bins=bins, labels=labels, include_lowest=True)
+                dist = med_enriched.groupby(["Planos","Faixa Aluguel"])["Médico"].nunique().reset_index(name="Profissionais")
+                fig9 = px.bar(dist, x="Faixa Aluguel", y="Profissionais", color="Planos", barmode="group",
+                              title="Profissionais por faixa de aluguel × PLANOS", text="Profissionais")
+                fig9.update_traces(textposition="outside")
+                st.plotly_chart(fig9, use_container_width=True)
+
+            g3, g4 = st.columns(2)
+            with g3:
+                if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
+                    esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
+                    fig10 = px.bar(esp_avg, x="Valor médio (R$)", y="Especialidade", orientation="h", title="Valor médio de aluguel por especialidade", text="Valor médio (R$)")
+                    fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
+                    st.plotly_chart(fig10, use_container_width=True)
+                else:
+                    st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
+            with g4:
+                if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
+                    plano_esp = med_enriched.groupby(["Especialidade","Planos"])["Médico"].nunique().reset_index(name="Profissionais")
+                    fig11 = px.bar(plano_esp, x="Especialidade", y="Profissionais", color="Planos", barmode="group",
+                                   title="Profissionais por especialidade × PLANOS", text="Profissionais")
+                    fig11.update_traces(textposition="outside")
+                    st.plotly_chart(fig11, use_container_width=True)
+                else:
+                    st.info("Inclua 'Especialidade' e 'PLANOS'.")
+
+            st.markdown("##### Indicadores por consultório")
+
+            if not consultorio_planos.empty:
+                st.markdown("###### Convênios por consultório")
+                gp1, gp2 = st.columns((2, 1))
+                with gp1:
+                    planos_ord = consultorio_planos.sort_values(
+                        ["Consultório", "Planos"],
+                        ascending=[True, True],
+                    )
+                    consultorios_ordenados = planos_ord["Consultório"].unique().tolist()
+                    if not consultorios_ordenados:
+                        st.info("Nenhum consultório disponível para montar os gráficos de convênios.")
+                    else:
+                        tab_labels = []
+                        for nome in consultorios_ordenados:
+                            if pd.isna(nome) or not str(nome).strip():
+                                tab_labels.append("Não informado")
                             else:
-                                dados_cons = planos_ord[planos_ord["Consultório"] == consultorio_nome]
-                            fig_cons_planos = px.bar(
-                                dados_cons,
-                                x="Planos",
-                                y="Profissionais",
-                                color="Planos",
-                                title=f"Convênios atendidos no {display_nome}",
-                                text="Profissionais",
-                            )
-                            fig_cons_planos.update_traces(textposition="outside")
-                            fig_cons_planos.update_layout(
-                                xaxis_title="Convênio",
-                                yaxis_title="Profissionais",
-                                showlegend=False,
-                            )
-                            st.plotly_chart(fig_cons_planos, use_container_width=True)
-            with gp2:
-                pivot_planos = (
-                    consultorio_planos.pivot_table(
-                        index="Consultório",
-                        columns="Planos",
-                        values="Profissionais",
-                        aggfunc="sum",
-                        fill_value=0,
+                                tab_labels.append(str(nome))
+                        tabs = st.tabs(tab_labels)
+                        for tab, consultorio_nome, display_nome in zip(tabs, consultorios_ordenados, tab_labels):
+                            with tab:
+                                if pd.isna(consultorio_nome):
+                                    dados_cons = planos_ord[planos_ord["Consultório"].isna()]
+                                else:
+                                    dados_cons = planos_ord[planos_ord["Consultório"] == consultorio_nome]
+                                fig_cons_planos = px.bar(
+                                    dados_cons,
+                                    x="Planos",
+                                    y="Profissionais",
+                                    color="Planos",
+                                    title=f"Convênios atendidos no {display_nome}",
+                                    text="Profissionais",
+                                )
+                                fig_cons_planos.update_traces(textposition="outside")
+                                fig_cons_planos.update_layout(
+                                    xaxis_title="Convênio",
+                                    yaxis_title="Profissionais",
+                                    showlegend=False,
+                                )
+                                st.plotly_chart(fig_cons_planos, use_container_width=True)
+                with gp2:
+                    pivot_planos = (
+                        consultorio_planos.pivot_table(
+                            index="Consultório",
+                            columns="Planos",
+                            values="Profissionais",
+                            aggfunc="sum",
+                            fill_value=0,
+                        )
+                        .astype(int)
+                        .reset_index()
                     )
-                    .astype(int)
-                    .reset_index()
+                    pivot_planos = pivot_planos.sort_values("Consultório")
+                    st.dataframe(pivot_planos, use_container_width=True)
+            else:
+                st.info(
+                    "Inclua 'Consultório', 'Planos' e 'Médico' para visualizar a distribuição de convênios por consultório."
                 )
-                pivot_planos = pivot_planos.sort_values("Consultório")
-                st.dataframe(pivot_planos, use_container_width=True)
-        else:
-            st.info(
-                "Inclua 'Consultório', 'Planos' e 'Médico' para visualizar a distribuição de convênios por consultório."
-            )
 
-        gc1, gc2 = st.columns(2)
-        with gc1:
-            if not consultorio_totais.empty and "Valor Aluguel Total" in consultorio_totais.columns:
-                consultorio_valores = consultorio_totais.dropna(subset=["Valor Aluguel Total"])
-                if not consultorio_valores.empty:
-                    fig_cons_valor = px.bar(
-                        consultorio_valores,
-                        x="Consultório",
-                        y="Valor Aluguel Total",
-                        title="Valor total de aluguel por consultório",
-                        text="Valor Aluguel Total",
-                    )
-                    fig_cons_valor.update_traces(
-                        texttemplate="R$ %{y:,.2f}",
-                        textposition="outside",
-                    )
-                    fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
-                    st.plotly_chart(fig_cons_valor, use_container_width=True)
+            gc1, gc2 = st.columns(2)
+            with gc1:
+                if not consultorio_totais.empty and "Valor Aluguel Total" in consultorio_totais.columns:
+                    consultorio_valores = consultorio_totais.dropna(subset=["Valor Aluguel Total"])
+                    if not consultorio_valores.empty:
+                        fig_cons_valor = px.bar(
+                            consultorio_valores,
+                            x="Consultório",
+                            y="Valor Aluguel Total",
+                            title="Valor total de aluguel por consultório",
+                            text="Valor Aluguel Total",
+                        )
+                        fig_cons_valor.update_traces(
+                            texttemplate="R$ %{y:,.2f}",
+                            textposition="outside",
+                        )
+                        fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
+                        st.plotly_chart(fig_cons_valor, use_container_width=True)
+                    else:
+                        st.info("Nenhum valor de aluguel informado para os consultórios listados.")
                 else:
-                    st.info("Nenhum valor de aluguel informado para os consultórios listados.")
-            else:
-                st.info("Inclua 'Consultório' e 'Valor Aluguel' para visualizar os totais.")
-        with gc2:
-            if not consultorio_totais.empty:
-                fig_cons_prof = px.bar(
-                    consultorio_totais,
-                    x="Consultório",
-                    y="Profissionais",
-                    title="Profissionais por consultório",
-                    text="Profissionais",
-                )
-                fig_cons_prof.update_traces(textposition="outside")
-                st.plotly_chart(fig_cons_prof, use_container_width=True)
-            else:
-                st.info("Inclua 'Consultório' para visualizar a distribuição de profissionais.")
+                    st.info("Inclua 'Consultório' e 'Valor Aluguel' para visualizar os totais.")
+            with gc2:
+                if not consultorio_totais.empty:
+                    fig_cons_prof = px.bar(
+                        consultorio_totais,
+                        x="Consultório",
+                        y="Profissionais",
+                        title="Profissionais por consultório",
+                        text="Profissionais",
+                    )
+                    fig_cons_prof.update_traces(textposition="outside")
+                    st.plotly_chart(fig_cons_prof, use_container_width=True)
+                else:
+                    st.info("Inclua 'Consultório' para visualizar a distribuição de profissionais.")
 
-        if not consultorio_medico_agg.empty:
-            st.markdown("##### Tabela por consultório × médico")
-            display_cols = [
+            if not consultorio_medico_agg.empty:
+                st.markdown("##### Tabela por consultório × médico")
+                display_cols = [
+                    c
+                    for c in [
+                        "Consultório",
+                        "Médico",
+                        "Profissionais",
+                        "Valor Aluguel Total",
+                    ]
+                    if c in consultorio_medico_agg.columns
+                ]
+                st.dataframe(
+                    consultorio_medico_agg[display_cols].sort_values(
+                        ["Consultório", "Médico"], na_position="last"
+                    ),
+                    use_container_width=True,
+                )
+
+            g5, g6 = st.columns(2)
+            with g5:
+                if "Sala Exclusiva" in med_enriched.columns or "Sala Dividida" in med_enriched.columns:
+                    ts = med_enriched.copy()
+                    ts["Tipo de Sala"] = None
+                    if "Sala Exclusiva" in ts.columns:
+                        ts.loc[ts["Sala Exclusiva"].eq("Sim"), "Tipo de Sala"] = "Exclusiva"
+                    if "Sala Dividida" in ts.columns:
+                        ts.loc[ts["Sala Dividida"].eq("Sim"), "Tipo de Sala"] = ts["Tipo de Sala"].fillna("Dividida")
+                    ts = ts.dropna(subset=["Tipo de Sala"])
+                    if not ts.empty:
+                        dist_ts = ts.groupby("Tipo de Sala")["Médico"].nunique().reset_index(name="Profissionais")
+                        fig12 = px.bar(dist_ts, x="Tipo de Sala", y="Profissionais", title="Profissionais por tipo de sala", text="Profissionais")
+                        fig12.update_traces(textposition="outside")
+                        st.plotly_chart(fig12, use_container_width=True)
+                    else:
+                        st.info("Sem marcações de sala exclusiva/dividida para analisar.")
+                else:
+                    st.info("Inclua colunas 'Sala Exclusiva' e/ou 'Sala Dividida'.")
+
+            st.markdown("##### Tabela (Médico × CRM × Especialidade × PLANOS × Valor × Tipo de Sala × Turnos)")
+            cols_show = [
                 c
                 for c in [
-                    "Consultório",
                     "Médico",
-                    "Profissionais",
-                    "Valor Aluguel Total",
+                    "Consultório",
+                    "CRM",
+                    "Especialidade",
+                    "Planos",
+                    "Valor Aluguel",
+                    "Sala Exclusiva",
+                    "Sala Dividida",
+                    "Turnos Utilizados",
                 ]
-                if c in consultorio_medico_agg.columns
+                if c in med_enriched.columns
+            ]
+            sort_cols = [
+                c
+                for c in ["Planos", "Consultório", "Especialidade", "Valor Aluguel", "Médico"]
+                if c in med_enriched.columns
             ]
             st.dataframe(
-                consultorio_medico_agg[display_cols].sort_values(
-                    ["Consultório", "Médico"], na_position="last"
-                ),
+                med_enriched[cols_show].sort_values(sort_cols, na_position="last") if sort_cols else med_enriched[cols_show],
                 use_container_width=True,
             )
 
-        g5, g6 = st.columns(2)
-        with g5:
-            if "Sala Exclusiva" in med_enriched.columns or "Sala Dividida" in med_enriched.columns:
-                ts = med_enriched.copy()
-                ts["Tipo de Sala"] = None
-                if "Sala Exclusiva" in ts.columns:
-                    ts.loc[ts["Sala Exclusiva"].eq("Sim"), "Tipo de Sala"] = "Exclusiva"
-                if "Sala Dividida" in ts.columns:
-                    ts.loc[ts["Sala Dividida"].eq("Sim"), "Tipo de Sala"] = ts["Tipo de Sala"].fillna("Dividida")
-                ts = ts.dropna(subset=["Tipo de Sala"])
-                if not ts.empty:
-                    dist_ts = ts.groupby("Tipo de Sala")["Médico"].nunique().reset_index(name="Profissionais")
-                    fig12 = px.bar(dist_ts, x="Tipo de Sala", y="Profissionais", title="Profissionais por tipo de sala", text="Profissionais")
-                    fig12.update_traces(textposition="outside")
-                    st.plotly_chart(fig12, use_container_width=True)
-                else:
-                    st.info("Sem marcações de sala exclusiva/dividida para analisar.")
-            else:
-                st.info("Inclua colunas 'Sala Exclusiva' e/ou 'Sala Dividida'.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("##### Tabela (Médico × CRM × Especialidade × PLANOS × Valor × Tipo de Sala × Turnos)")
-        cols_show = [
-            c
-            for c in [
-                "Médico",
-                "Consultório",
-                "CRM",
-                "Especialidade",
-                "Planos",
-                "Valor Aluguel",
-                "Sala Exclusiva",
-                "Sala Dividida",
-                "Turnos Utilizados",
-            ]
-            if c in med_enriched.columns
-        ]
-        sort_cols = [
-            c
-            for c in ["Planos", "Consultório", "Especialidade", "Valor Aluguel", "Médico"]
-            if c in med_enriched.columns
-        ]
-        st.dataframe(
-            med_enriched[cols_show].sort_values(sort_cols, na_position="last") if sort_cols else med_enriched[cols_show],
-            use_container_width=True,
-        )
 
-        st.markdown('</div>', unsafe_allow_html=True)
+if selected_section == "📋 Agenda":
+    # ---------- Detalhamento ----------
+    st.markdown('<div id="agenda"></div>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-title">📋 Agenda Detalhada (Tabela)</h2>', unsafe_allow_html=True)
+    st.dataframe(
+        fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
+        use_container_width=True
+    )
 
-# ---------- Detalhamento ----------
-st.markdown('<div id="agenda"></div>', unsafe_allow_html=True)
-st.markdown('<h2 class="section-title">📋 Agenda Detalhada (Tabela)</h2>', unsafe_allow_html=True)
-st.dataframe(
-    fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
-    use_container_width=True
-)
+    ranking_para_pdf = ranking_prod_total.copy()
+    if not ranking_para_pdf.empty:
+        if sel_salas:
+            ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
+        if sel_medicos:
+            ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
 
-ranking_para_pdf = ranking_prod_total.copy()
-if not ranking_para_pdf.empty:
-    if sel_salas:
-        ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
-    if sel_medicos:
-        ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
+    pdf_bytes = build_pdf_report(
+        summary_metrics,
+        ranking_para_pdf,
+        med_enriched if not med_df.empty else pd.DataFrame(),
+        fdf,
+        ranking_limits={
+            "total": st.session_state.get("ranking_produtividade_top", 10),
+            "exames": st.session_state.get("ranking_produtividade_top", 10),
+            "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
+            "receita": st.session_state.get("ranking_produtividade_top", 10),
+        },
+    )
 
-pdf_bytes = build_pdf_report(
-    summary_metrics,
-    ranking_para_pdf,
-    med_enriched if not med_df.empty else pd.DataFrame(),
-    fdf,
-    ranking_limits={
-        "total": st.session_state.get("ranking_produtividade_top", 10),
-        "exames": st.session_state.get("ranking_produtividade_top", 10),
-        "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
-        "receita": st.session_state.get("ranking_produtividade_top", 10),
-    },
-)
+    csv = fdf.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "📄 Baixar relatório completo (PDF)",
+        data=pdf_bytes,
+        file_name="dashboard_consultorios.pdf",
+        mime="application/pdf",
+    )
+    st.download_button("⬇️ Baixar dados filtrados (CSV)", data=csv, file_name="agenda_filtrada.csv", mime="text/csv")
 
-csv = fdf.to_csv(index=False).encode("utf-8-sig")
-st.download_button(
-    "📄 Baixar relatório completo (PDF)",
-    data=pdf_bytes,
-    file_name="dashboard_consultorios.pdf",
-    mime="application/pdf",
-)
-st.download_button("⬇️ Baixar dados filtrados (CSV)", data=csv, file_name="agenda_filtrada.csv", mime="text/csv")
-
-st.markdown(
-    '<div style="text-align: right; margin-top: 2rem;"><a href="#topo">⬆️ Voltar ao topo</a></div>',
-    unsafe_allow_html=True,
-)
+    st.markdown(
+        '<div style="text-align: right; margin-top: 2rem;"><a href="#topo">⬆️ Voltar ao topo</a></div>',
+        unsafe_allow_html=True,
+    )
