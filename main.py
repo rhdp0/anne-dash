@@ -681,8 +681,28 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
             frames.append(dfp)
             break
     if not frames:
-        return pd.DataFrame(columns=["Profissional", "CRM", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas", "Consultório", "_SalaNorm"])
-    return pd.concat(frames, ignore_index=True)
+        return pd.DataFrame(
+            columns=[
+                "Profissional",
+                "CRM",
+                "Especialidade",
+                "Exames Solicitados",
+                "Cirurgias Solicitadas",
+                "Receita",
+                "Consultório",
+                "_SalaNorm",
+            ]
+        )
+    produtividade_df = pd.concat(frames, ignore_index=True)
+
+    if "Receita" not in produtividade_df.columns:
+        produtividade_df["Receita"] = 0.0
+
+    produtividade_df["Receita"] = pd.to_numeric(
+        produtividade_df["Receita"], errors="coerce"
+    ).fillna(0.0)
+
+    return produtividade_df
 
 df = tidy_from_sheets(excel)
 if df.empty:
@@ -752,7 +772,10 @@ if not produtividade_df.empty:
         ranking_prod_total["Exames Solicitados"] + ranking_prod_total["Cirurgias Solicitadas"]
     )
 
-    ranking_prod_total = ranking_prod_total[ranking_prod_total["Total Procedimentos"] > 0]
+    ranking_prod_total = ranking_prod_total[
+        (ranking_prod_total["Total Procedimentos"] > 0)
+        | (ranking_prod_total["Receita"] > 0)
+    ]
 
     for col in ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos"]:
         ranking_prod_total[col] = ranking_prod_total[col].round().astype(int)
