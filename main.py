@@ -113,6 +113,21 @@ def _to_number(x):
     except:
         return pd.NA
 
+def format_currency_value(value) -> str:
+    if value is None:
+        return "—"
+    try:
+        if pd.isna(value):
+            return "—"
+    except TypeError:
+        pass
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    formatted = f"R$ {numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return formatted
+
 def _first_nonempty(series):
     for val in series:
         if pd.isna(val):
@@ -229,6 +244,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
         limit_total = _get_limit("total", 10)
         limit_exames = _get_limit("exames", limit_total)
         limit_cirurgias = _get_limit("cirurgias", limit_total)
+        limit_receita = _get_limit("receita", limit_total)
 
         def _prepare_ranking(df_source: pd.DataFrame, order: List[Tuple[str, bool]]) -> pd.DataFrame:
             sort_cols: List[str] = []
@@ -278,6 +294,16 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
             ],
         ).head(min(limit_cirurgias, len(ranking_df)))
 
+        ranking_receita_pdf = _prepare_ranking(
+            ranking_df,
+            [
+                ("Receita", False),
+                ("Total Procedimentos", False),
+                ("Profissional", True),
+                ("Consultório", True),
+            ],
+        ).head(min(limit_receita, len(ranking_df)))
+
         def _write_ranking_section(title: str, dataset: pd.DataFrame, limit_used: int) -> None:
             if dataset.empty:
                 return
@@ -297,6 +323,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                 total = _safe_int(row.get("Total Procedimentos"))
                 exames = _safe_int(row.get("Exames Solicitados"))
                 cirurgias = _safe_int(row.get("Cirurgias Solicitadas"))
+                receita = row.get("Receita")
                 rank = row.get("Rank")
 
                 total_txt = f"Total: {total}" if total is not None else ""
@@ -309,6 +336,8 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                     detalhes.append(f"Exames: {exames}")
                 if cirurgias is not None:
                     detalhes.append(f"Cirurgias: {cirurgias}")
+                if receita is not None and not (isinstance(receita, float) and np.isnan(receita)):
+                    detalhes.append(f"Receita: {format_currency_value(receita)}")
                 if total_txt:
                     detalhes.insert(0, total_txt)
 
@@ -338,6 +367,12 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
             ranking_cirurgias_pdf,
             min(limit_cirurgias, len(ranking_df)),
         )
+        if "Receita" in ranking_df.columns:
+            _write_ranking_section(
+                "Top profissionais por receita",
+                ranking_receita_pdf,
+                min(limit_receita, len(ranking_df)),
+            )
 
     if med_df is not None and not med_df.empty:
         med_pdf = med_df.copy()
@@ -535,7 +570,9 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
         s_norm = _normalize_col(sheet)
         if "consultorios" in s_norm:
             continue
-        if "produtiv" not in s_norm or "consult" not in s_norm:
+        is_prod_sheet = "produtiv" in s_norm and "consult" in s_norm
+        is_contas_sheet = "conta" in s_norm and "medic" in s_norm
+        if not (is_prod_sheet or is_contas_sheet):
             continue
         for header in range(0, 6):
             try:
@@ -559,6 +596,12 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
                     rename[col] = "Exames Solicitados"
                 elif "cirurg" in norm:
                     rename[col] = "Cirurgias Solicitadas"
+                elif (
+                    "receita" in norm
+                    or ("valor" in norm and "aluguel" not in norm and "total" in norm)
+                    or "fatur" in norm
+                ):
+                    rename[col] = "Receita"
                 elif "consult" in norm and "produtiv" not in norm:
                     rename[col] = "Consultório"
 
@@ -569,7 +612,19 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
             if "Exames Solicitados" not in dfp.columns and "Cirurgias Solicitadas" not in dfp.columns:
                 continue
 
-            keep = [c for c in ["Profissional", "CRM", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas", "Consultório"] if c in dfp.columns]
+            keep = [
+                c
+                for c in [
+                    "Profissional",
+                    "CRM",
+                    "Especialidade",
+                    "Exames Solicitados",
+                    "Cirurgias Solicitadas",
+                    "Receita",
+                    "Consultório",
+                ]
+                if c in dfp.columns
+            ]
             dfp = dfp[keep].copy()
 
             dfp["Profissional"] = dfp["Profissional"].astype(str).str.strip()
@@ -610,14 +665,44 @@ def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
                     dfp[col] = 0
                 dfp[col] = pd.to_numeric(dfp[col], errors="coerce").fillna(0)
 
+            if "Receita" in dfp.columns:
+                dfp["Receita"] = dfp["Receita"].apply(
+                    lambda value: 0
+                    if (pd.isna(value) or str(value).strip() == "")
+                    else _to_number(value)
+                )
+                dfp["Receita"] = pd.to_numeric(dfp["Receita"], errors="coerce").fillna(0.0)
+            else:
+                dfp["Receita"] = 0.0
+
             dfp["Consultório"] = dfp["Consultório"].apply(_format_consultorio_label)
             dfp["_SalaNorm"] = dfp["Consultório"].apply(_normalize_col)
 
             frames.append(dfp)
             break
     if not frames:
-        return pd.DataFrame(columns=["Profissional", "CRM", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas", "Consultório", "_SalaNorm"])
-    return pd.concat(frames, ignore_index=True)
+        return pd.DataFrame(
+            columns=[
+                "Profissional",
+                "CRM",
+                "Especialidade",
+                "Exames Solicitados",
+                "Cirurgias Solicitadas",
+                "Receita",
+                "Consultório",
+                "_SalaNorm",
+            ]
+        )
+    produtividade_df = pd.concat(frames, ignore_index=True)
+
+    if "Receita" not in produtividade_df.columns:
+        produtividade_df["Receita"] = 0.0
+
+    produtividade_df["Receita"] = pd.to_numeric(
+        produtividade_df["Receita"], errors="coerce"
+    ).fillna(0.0)
+
+    return produtividade_df
 
 df = tidy_from_sheets(excel)
 if df.empty:
@@ -649,6 +734,8 @@ fdf = df[mask_base & mask_medico].copy()
 
 produtividade_df = load_produtividade_from_excel(excel)
 ranking_prod_total = pd.DataFrame()
+receita_por_medico = pd.DataFrame()
+receita_por_consultorio = pd.DataFrame()
 if not produtividade_df.empty:
     base_prod = produtividade_df.copy()
     base_prod["Especialidade"] = base_prod["Especialidade"].fillna("").astype(str).str.strip()
@@ -660,6 +747,8 @@ if not produtividade_df.empty:
     }
     if "CRM" in base_prod.columns:
         agg_map["CRM"] = _first_nonempty
+    if "Receita" in base_prod.columns:
+        agg_map["Receita"] = "sum"
 
     ranking_prod_total = (
         base_prod.groupby(["Consultório", "Especialidade", "Profissional"], as_index=False)
@@ -669,6 +758,13 @@ if not produtividade_df.empty:
     if "CRM" not in ranking_prod_total.columns:
         ranking_prod_total["CRM"] = ""
 
+    if "Receita" not in ranking_prod_total.columns:
+        ranking_prod_total["Receita"] = 0.0
+
+    ranking_prod_total["Receita"] = pd.to_numeric(
+        ranking_prod_total["Receita"], errors="coerce"
+    ).fillna(0.0)
+
     for col in ["Exames Solicitados", "Cirurgias Solicitadas"]:
         ranking_prod_total[col] = pd.to_numeric(ranking_prod_total[col], errors="coerce").fillna(0)
 
@@ -676,10 +772,15 @@ if not produtividade_df.empty:
         ranking_prod_total["Exames Solicitados"] + ranking_prod_total["Cirurgias Solicitadas"]
     )
 
-    ranking_prod_total = ranking_prod_total[ranking_prod_total["Total Procedimentos"] > 0]
+    ranking_prod_total = ranking_prod_total[
+        (ranking_prod_total["Total Procedimentos"] > 0)
+        | (ranking_prod_total["Receita"] > 0)
+    ]
 
     for col in ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos"]:
         ranking_prod_total[col] = ranking_prod_total[col].round().astype(int)
+
+    ranking_prod_total["Receita"] = ranking_prod_total["Receita"].astype(float)
 
     ranking_prod_total["SalaNorm"] = ranking_prod_total["Consultório"].apply(_normalize_col)
     ranking_prod_total["Etiqueta"] = ranking_prod_total.apply(
@@ -689,6 +790,18 @@ if not produtividade_df.empty:
             else f"{r['Profissional']} ({r['Consultório']})"
         ),
         axis=1,
+    )
+
+    receita_por_medico = (
+        ranking_prod_total.groupby("Profissional", as_index=False)["Receita"].sum()
+        .rename(columns={"Receita": "Receita Total"})
+        .sort_values("Receita Total", ascending=False)
+    )
+
+    receita_por_consultorio = (
+        ranking_prod_total.groupby("Consultório", as_index=False)["Receita"].sum()
+        .rename(columns={"Receita": "Receita Total"})
+        .sort_values("Receita Total", ascending=False)
     )
 
 # ---------- KPIs ----------
@@ -711,6 +824,11 @@ summary_metrics = {
 }
 if sel_medicos:
     summary_metrics["Médicos no filtro"] = len(sel_medicos)
+
+if not ranking_prod_total.empty:
+    total_receita_geral = ranking_prod_total["Receita"].sum()
+    if total_receita_geral > 0:
+        summary_metrics["Receita total (produtividade)"] = format_currency_value(total_receita_geral)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Consultórios selecionados", total_salas)
@@ -772,6 +890,33 @@ with st.container():
     if ranking_prod_total.empty:
         st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
     else:
+        receita_total = ranking_prod_total["Receita"].sum()
+        col_receita_total, col_receita_medico, col_receita_consult = st.columns(3)
+        col_receita_total.metric(
+            "Receita total registrada",
+            format_currency_value(receita_total) if receita_total else "—",
+        )
+
+        if not receita_por_medico.empty:
+            top_medico_receita = receita_por_medico.iloc[0]
+            col_receita_medico.metric(
+                "Maior receita por médico",
+                format_currency_value(top_medico_receita["Receita Total"]),
+                top_medico_receita["Profissional"],
+            )
+        else:
+            col_receita_medico.metric("Maior receita por médico", "—", "Sem dados")
+
+        if not receita_por_consultorio.empty:
+            top_consult_receita = receita_por_consultorio.iloc[0]
+            col_receita_consult.metric(
+                "Maior receita por consultório",
+                format_currency_value(top_consult_receita["Receita Total"]),
+                top_consult_receita["Consultório"],
+            )
+        else:
+            col_receita_consult.metric("Maior receita por consultório", "—", "Sem dados")
+
         ranking_total = ranking_prod_total.sort_values(
             ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional", "Consultório"],
             ascending=[False, False, False, True, True],
@@ -790,6 +935,12 @@ with st.container():
         ).reset_index(drop=True)
         ranking_cirurgias.insert(0, "Rank", range(1, len(ranking_cirurgias) + 1))
 
+        ranking_receita = ranking_prod_total.sort_values(
+            ["Receita", "Total Procedimentos", "Profissional", "Consultório"],
+            ascending=[False, False, True, True],
+        ).reset_index(drop=True)
+        ranking_receita.insert(0, "Rank", range(1, len(ranking_receita) + 1))
+
         top_n_default = min(len(ranking_total), 10) if len(ranking_total) else 1
         top_n = st.slider(
             "Quantidade de profissionais no ranking",
@@ -802,8 +953,9 @@ with st.container():
         top_total = ranking_total.head(top_n)
         top_exames = ranking_exames.head(top_n)
         top_cirurgias = ranking_cirurgias.head(top_n)
+        top_receita = ranking_receita.head(top_n)
 
-        tabs = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias"])
+        tabs = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias", "Top Receita"])
 
         def _render_highlights(dataset: pd.DataFrame, label_col: str = "Etiqueta") -> None:
             destaques = dataset.head(3).to_dict("records")
@@ -814,6 +966,7 @@ with st.container():
                 total = int(row.get("Total Procedimentos", 0))
                 exames = int(row.get("Exames Solicitados", 0))
                 cirurgias = int(row.get("Cirurgias Solicitadas", 0))
+                receita_valor = float(row.get("Receita", 0) or 0)
                 profissional = row.get("Profissional", "")
                 especialidade = row.get("Especialidade", "")
                 consultorio = row.get("Consultório", "")
@@ -831,20 +984,38 @@ with st.container():
                     info_parts.append(f"CRM {crm}")
                 info_parts.append(f"Exames: {exames}")
                 info_parts.append(f"Cirurgias: {cirurgias}")
+                if receita_valor:
+                    info_parts.append(f"Receita: {format_currency_value(receita_valor)}")
+
+                metric_value = f"{total} Solicitações"
+                if receita_valor:
+                    metric_value = format_currency_value(receita_valor)
+                    info_parts.insert(0, f"Solicitações: {total}")
 
                 col.metric(
                     titulo,
-                    f"{total} Solicitações",
+                    metric_value,
                     " • ".join(info_parts),
                 )
 
-        def _render_chart(dataset: pd.DataFrame, value_col: str, title: str, label_col: str = "Etiqueta") -> None:
+        def _render_chart(
+            dataset: pd.DataFrame,
+            value_col: str,
+            title: str,
+            label_col: str = "Etiqueta",
+            is_currency: bool = False,
+        ) -> None:
             if dataset.empty:
                 st.info("Sem registros para os filtros atuais.")
                 return
 
             display_df = dataset.copy()
-            display_df[value_col] = display_df[value_col].astype(int)
+            display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
+            if is_currency:
+                display_df["__text"] = display_df[value_col].apply(format_currency_value)
+            else:
+                display_df[value_col] = display_df[value_col].round().astype(int)
+                display_df["__text"] = display_df[value_col]
             fig = px.bar(
                 display_df,
                 x=value_col,
@@ -853,21 +1024,35 @@ with st.container():
                 color=value_col,
                 color_continuous_scale="Blues",
                 title=title,
-                text=value_col,
+                text="__text",
             )
             fig.update_layout(coloraxis_showscale=False)
-            fig.update_traces(
-                texttemplate="%{text}",
-                textposition="outside",
-                customdata=display_df[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
-                hovertemplate=(
-                    "%{customdata[0]}º %{y}<br>"
-                    "Consultório: %{customdata[1]}<br>"
-                    "Especialidade: %{customdata[2]}<br>"
-                    "Exames solicitados: %{customdata[3]}<br>"
-                    "Cirurgias solicitadas: %{customdata[4]}<extra></extra>"
-                ),
-            )
+            if is_currency:
+                fig.update_traces(
+                    texttemplate="%{text}",
+                    textposition="outside",
+                    customdata=display_df[["Rank", "Consultório", "Especialidade", "Total Procedimentos"]],
+                    hovertemplate=(
+                        "%{customdata[0]}º %{y}<br>"
+                        "Consultório: %{customdata[1]}<br>"
+                        "Especialidade: %{customdata[2]}<br>"
+                        "Receita: %{text}<br>"
+                        "Total de procedimentos: %{customdata[3]}<extra></extra>"
+                    ),
+                )
+            else:
+                fig.update_traces(
+                    texttemplate="%{text}",
+                    textposition="outside",
+                    customdata=display_df[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                    hovertemplate=(
+                        "%{customdata[0]}º %{y}<br>"
+                        "Consultório: %{customdata[1]}<br>"
+                        "Especialidade: %{customdata[2]}<br>"
+                        "Exames solicitados: %{customdata[3]}<br>"
+                        "Cirurgias solicitadas: %{customdata[4]}<extra></extra>"
+                    ),
+                )
             fig.update_yaxes(
                 categoryorder="array",
                 categoryarray=display_df[label_col].tolist()[::-1],
@@ -908,6 +1093,66 @@ with st.container():
                 )
             else:
                 st.info("Sem registros de cirurgias para os filtros atuais.")
+
+        with tabs[3]:
+            _render_highlights(top_receita)
+            if not top_receita.empty:
+                _render_chart(
+                    top_receita,
+                    "Receita",
+                    "Top profissionais por receita",
+                    is_currency=True,
+                )
+            else:
+                st.info("Sem registros de receita para os filtros atuais.")
+
+        if not receita_por_consultorio.empty or not receita_por_medico.empty:
+            st.markdown("#### Distribuição de receita consolidada")
+            graf_receita_consult, graf_receita_medico = st.columns(2)
+
+            if not receita_por_consultorio.empty:
+                consult_display = receita_por_consultorio.head(15).copy()
+                consult_display["Receita Formatada"] = consult_display["Receita Total"].apply(
+                    format_currency_value
+                )
+                fig_receita_consult = px.bar(
+                    consult_display,
+                    x="Receita Total",
+                    y="Consultório",
+                    orientation="h",
+                    title="Top consultórios por receita",
+                    text="Receita Formatada",
+                )
+                fig_receita_consult.update_traces(textposition="outside")
+                fig_receita_consult.update_yaxes(
+                    categoryorder="array",
+                    categoryarray=consult_display["Consultório"].tolist()[::-1],
+                )
+                graf_receita_consult.plotly_chart(fig_receita_consult, use_container_width=True)
+            else:
+                graf_receita_consult.info("Sem dados de receita por consultório.")
+
+            if not receita_por_medico.empty:
+                med_display = receita_por_medico.head(15).copy()
+                med_display["Receita Formatada"] = med_display["Receita Total"].apply(
+                    format_currency_value
+                )
+                fig_receita_medico = px.bar(
+                    med_display,
+                    x="Receita Total",
+                    y="Profissional",
+                    orientation="h",
+                    title="Top médicos por receita consolidada",
+                    text="Receita Formatada",
+                )
+                fig_receita_medico.update_traces(textposition="outside")
+                fig_receita_medico.update_yaxes(
+                    categoryorder="array",
+                    categoryarray=med_display["Profissional"].tolist()[::-1],
+                )
+                graf_receita_medico.plotly_chart(fig_receita_medico, use_container_width=True)
+            else:
+                graf_receita_medico.info("Sem dados de receita por médico consolidada.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -961,12 +1206,14 @@ with st.container():
                 "Total Procedimentos",
                 "Exames Solicitados",
                 "Cirurgias Solicitadas",
+                "Receita",
                 "EtiquetaLocal",
                 "Rank",
             ]
             top_total_ind = pd.DataFrame(columns=empty_ind_cols)
             top_exames_ind = pd.DataFrame(columns=empty_ind_cols)
             top_cirurgias_ind = pd.DataFrame(columns=empty_ind_cols)
+            top_receita_ind = pd.DataFrame(columns=empty_ind_cols)
             sala_norm = _normalize_col(sala_detalhe)
             if ranking_prod_total.empty:
                 st.info("Sem dados de produtividade carregados para detalhar este consultório.")
@@ -975,6 +1222,24 @@ with st.container():
                 if ranking_ind_base.empty:
                     st.info("Sem registros de produtividade para o consultório selecionado.")
                 else:
+                    receita_total_consultorio = ranking_ind_base["Receita"].sum()
+                    receita_media_profissional = 0.0
+                    if not ranking_ind_base.empty:
+                        receita_media_profissional = (
+                            ranking_ind_base.groupby("Profissional")["Receita"].sum().mean()
+                        ) or 0.0
+                    ic7, ic8 = st.columns(2)
+                    ic7.metric(
+                        "Receita total no consultório",
+                        format_currency_value(receita_total_consultorio),
+                    )
+                    ic8.metric(
+                        "Receita média por médico",
+                        format_currency_value(receita_media_profissional)
+                        if not pd.isna(receita_media_profissional)
+                        else "—",
+                    )
+
                     ranking_ind_total = ranking_ind_base.sort_values(
                         ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional"],
                         ascending=[False, False, False, True],
@@ -1011,6 +1276,18 @@ with st.container():
                         axis=1,
                     )
 
+                    ranking_ind_receita = ranking_ind_base.sort_values(
+                        ["Receita", "Total Procedimentos", "Profissional"],
+                        ascending=[False, False, True],
+                    ).reset_index(drop=True)
+                    ranking_ind_receita.insert(0, "Rank", range(1, len(ranking_ind_receita) + 1))
+                    ranking_ind_receita["EtiquetaLocal"] = ranking_ind_receita.apply(
+                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                        else r.get("Profissional", ""),
+                        axis=1,
+                    )
+
                     top_n_ind_default = min(len(ranking_ind_total), 10) if len(ranking_ind_total) else 1
                     top_n_ind = st.slider(
                         "Quantidade de profissionais no ranking do consultório",
@@ -1023,9 +1300,10 @@ with st.container():
                     top_total_ind = ranking_ind_total.head(top_n_ind)
                     top_exames_ind = ranking_ind_exames.head(top_n_ind)
                     top_cirurgias_ind = ranking_ind_cirurgias.head(top_n_ind)
+                    top_receita_ind = ranking_ind_receita.head(top_n_ind)
 
                     st.markdown("#### Destaques de produtividade no consultório")
-                    tabs_ind = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias"])
+                    tabs_ind = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias", "Top Receita"])
 
                     def _render_ind_highlights(dataset: pd.DataFrame) -> None:
                         destaques = dataset.head(3).to_dict("records")
@@ -1037,6 +1315,7 @@ with st.container():
                             total = int(row.get("Total Procedimentos", 0))
                             exames = int(row.get("Exames Solicitados", 0))
                             cirurgias = int(row.get("Cirurgias Solicitadas", 0))
+                            receita_valor = float(row.get("Receita", 0) or 0)
                             profissional = row.get("Profissional", "")
                             especialidade = row.get("Especialidade", "")
                             crm = row.get("CRM", "")
@@ -1047,39 +1326,67 @@ with st.container():
                                 titulo_local = f"{titulo_local} - {especialidade}"
 
                             delta_parts = [f"Exames: {exames}", f"Cirurgias: {cirurgias}"]
+                            if receita_valor:
+                                delta_parts.append(f"Receita: {format_currency_value(receita_valor)}")
                             if crm:
                                 delta_parts.insert(0, f"CRM {crm}")
 
+                            metric_value = f"{total} Solicitações"
+                            if receita_valor:
+                                metric_value = format_currency_value(receita_valor)
+                                delta_parts.insert(0, f"Solicitações: {total}")
+
                             col.metric(
                                 titulo_local,
-                                f"{total} Solicitações",
+                                metric_value,
                                 " • ".join(delta_parts),
                             )
 
-                    def _render_ind_chart(dataset: pd.DataFrame, value_col: str, title: str) -> None:
+                    def _render_ind_chart(
+                        dataset: pd.DataFrame,
+                        value_col: str,
+                        title: str,
+                        is_currency: bool = False,
+                    ) -> None:
                         if dataset.empty:
                             st.info("Sem registros para os filtros atuais.")
                             return
 
                         display_df = dataset.copy()
-                        display_df[value_col] = display_df[value_col].astype(int)
+                        display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
+                        if is_currency:
+                            display_df["__text"] = display_df[value_col].apply(format_currency_value)
+                        else:
+                            display_df[value_col] = display_df[value_col].round().astype(int)
+                            display_df["__text"] = display_df[value_col]
                         fig = px.bar(
                             display_df,
                             x=value_col,
                             y="EtiquetaLocal",
                             orientation="h",
                             title=title,
-                            text=value_col,
+                            text="__text",
                         )
-                        fig.update_traces(
-                            textposition="outside",
-                            customdata=display_df[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
-                            hovertemplate=(
-                                "%{customdata[0]}º %{y}<br>"
-                                "Exames solicitados: %{customdata[1]}<br>"
-                                "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
-                            ),
-                        )
+                        if is_currency:
+                            fig.update_traces(
+                                textposition="outside",
+                                customdata=display_df[["Rank", "Total Procedimentos"]],
+                                hovertemplate=(
+                                    "%{customdata[0]}º %{y}<br>"
+                                    "Receita: %{text}<br>"
+                                    "Total de procedimentos: %{customdata[1]}<extra></extra>"
+                                ),
+                            )
+                        else:
+                            fig.update_traces(
+                                textposition="outside",
+                                customdata=display_df[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                                hovertemplate=(
+                                    "%{customdata[0]}º %{y}<br>"
+                                    "Exames solicitados: %{customdata[1]}<br>"
+                                    "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
+                                ),
+                            )
                         fig.update_yaxes(
                             categoryorder="array",
                             categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
@@ -1108,6 +1415,15 @@ with st.container():
                             top_cirurgias_ind,
                             "Cirurgias Solicitadas",
                             f"Cirurgias solicitadas no consultório {sala_detalhe}",
+                        )
+
+                    with tabs_ind[3]:
+                        _render_ind_highlights(top_receita_ind)
+                        _render_ind_chart(
+                            top_receita_ind,
+                            "Receita",
+                            f"Receita no consultório {sala_detalhe}",
+                            is_currency=True,
                         )
 
             graf1, graf2 = st.columns(2)
@@ -1157,6 +1473,34 @@ with st.container():
                     categoryarray=top_med_ind_display["EtiquetaLocal"].tolist()[::-1],
                 )
                 st.plotly_chart(fig_top_ind, use_container_width=True)
+
+            if not top_receita_ind.empty and top_receita_ind["Receita"].sum() > 0:
+                top_receita_display = top_receita_ind.copy()
+                top_receita_display["Receita Formatada"] = top_receita_display["Receita"].apply(
+                    format_currency_value
+                )
+                fig_top_receita = px.bar(
+                    top_receita_display,
+                    x="Receita",
+                    y="EtiquetaLocal",
+                    orientation="h",
+                    title=f"Receita no consultório {sala_detalhe}",
+                    text="Receita Formatada",
+                )
+                fig_top_receita.update_traces(
+                    textposition="outside",
+                    customdata=top_receita_display[["Rank", "Total Procedimentos"]],
+                    hovertemplate=(
+                        "%{customdata[0]}º %{y}<br>"
+                        "Receita: %{text}<br>"
+                        "Total de procedimentos: %{customdata[1]}<extra></extra>"
+                    ),
+                )
+                fig_top_receita.update_yaxes(
+                    categoryorder="array",
+                    categoryarray=top_receita_display["EtiquetaLocal"].tolist()[::-1],
+                )
+                st.plotly_chart(fig_top_receita, use_container_width=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1622,6 +1966,7 @@ pdf_bytes = build_pdf_report(
         "total": st.session_state.get("ranking_produtividade_top", 10),
         "exames": st.session_state.get("ranking_produtividade_top", 10),
         "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
+        "receita": st.session_state.get("ranking_produtividade_top", 10),
     },
 )
 
