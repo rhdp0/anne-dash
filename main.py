@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 import unicodedata
+from typing import List, Tuple
 import numpy as np
 
 import pandas as pd
@@ -168,7 +169,7 @@ def _sanitize_pdf_text(text: str) -> str:
     return cleaned
 
 
-def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
+def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_limits=None) -> bytes:
     pdf = FPDF()
     pdf.set_left_margin(15)
     pdf.set_right_margin(15)
@@ -216,57 +217,127 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
         pdf.ln(2)
 
     if ranking_df is not None and not ranking_df.empty:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize_pdf_text("Top 10 profissionais por produtividade"), ln=1)
-        pdf.set_font("Helvetica", "", 11)
-        sort_cols = []
-        ascending = []
-        for col, asc in [
-            ("Total Procedimentos", False),
-            ("Cirurgias Solicitadas", False),
-            ("Exames Solicitados", False),
-            ("Profissional", True),
-            ("Consultório", True),
-        ]:
-            if col in ranking_df.columns:
-                sort_cols.append(col)
-                ascending.append(asc)
-        if sort_cols:
-            ranking_sorted = ranking_df.sort_values(sort_cols, ascending=ascending)
-        else:
-            ranking_sorted = ranking_df
-        top_ranking = ranking_sorted.head(10).reset_index(drop=True)
-        for idx, row in top_ranking.iterrows():
-            prof = row.get("Profissional", "")
-            especialidade = row.get("Especialidade", "")
-            consultorio = row.get("Consultório", "")
-            crm = row.get("CRM", "")
-            total = _safe_int(row.get("Total Procedimentos"))
-            exames = _safe_int(row.get("Exames Solicitados"))
-            cirurgias = _safe_int(row.get("Cirurgias Solicitadas"))
+        limits_cfg = ranking_limits or {}
 
-            total_txt = f"Total: {total}" if total is not None else ""
-            detalhes = []
-            if consultorio:
-                detalhes.append(f"Consultorio: {consultorio}")
-            if crm and str(crm).strip():
-                detalhes.append(f"CRM: {crm}")
-            if exames is not None:
-                detalhes.append(f"Exames: {exames}")
-            if cirurgias is not None:
-                detalhes.append(f"Cirurgias: {cirurgias}")
-            if total_txt:
-                detalhes.insert(0, total_txt)
+        def _get_limit(key: str, default: int = 10) -> int:
+            try:
+                value = int(limits_cfg.get(key, default))
+                return value if value > 0 else default
+            except (TypeError, ValueError):
+                return default
 
-            titulo = f"{idx + 1}. {prof}" if prof else f"{idx + 1}. Profissional"
-            if especialidade and especialidade != "Não informada":
-                titulo = f"{titulo} - {especialidade}"
+        limit_total = _get_limit("total", 10)
+        limit_exames = _get_limit("exames", limit_total)
+        limit_cirurgias = _get_limit("cirurgias", limit_total)
 
-            _write_line(titulo)
-            if detalhes:
-                _write_line("; ".join(detalhes), height=5)
-            pdf.ln(1)
-        pdf.ln(2)
+        def _prepare_ranking(df_source: pd.DataFrame, order: List[Tuple[str, bool]]) -> pd.DataFrame:
+            sort_cols: List[str] = []
+            ascending: List[bool] = []
+            for col, asc in order:
+                if col in df_source.columns:
+                    sort_cols.append(col)
+                    ascending.append(asc)
+            if sort_cols:
+                sorted_df = df_source.sort_values(sort_cols, ascending=ascending)
+            else:
+                sorted_df = df_source.copy()
+            sorted_df = sorted_df.reset_index(drop=True)
+            sorted_df.insert(0, "Rank", range(1, len(sorted_df) + 1))
+            return sorted_df
+
+        ranking_total_pdf = _prepare_ranking(
+            ranking_df,
+            [
+                ("Total Procedimentos", False),
+                ("Cirurgias Solicitadas", False),
+                ("Exames Solicitados", False),
+                ("Profissional", True),
+                ("Consultório", True),
+            ],
+        ).head(min(limit_total, len(ranking_df)))
+
+        ranking_exames_pdf = _prepare_ranking(
+            ranking_df,
+            [
+                ("Exames Solicitados", False),
+                ("Cirurgias Solicitadas", False),
+                ("Total Procedimentos", False),
+                ("Profissional", True),
+                ("Consultório", True),
+            ],
+        ).head(min(limit_exames, len(ranking_df)))
+
+        ranking_cirurgias_pdf = _prepare_ranking(
+            ranking_df,
+            [
+                ("Cirurgias Solicitadas", False),
+                ("Exames Solicitados", False),
+                ("Total Procedimentos", False),
+                ("Profissional", True),
+                ("Consultório", True),
+            ],
+        ).head(min(limit_cirurgias, len(ranking_df)))
+
+        def _write_ranking_section(title: str, dataset: pd.DataFrame, limit_used: int) -> None:
+            if dataset.empty:
+                return
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(
+                0,
+                8,
+                _sanitize_pdf_text(f"{title} (limite configurado: {limit_used})"),
+                ln=1,
+            )
+            pdf.set_font("Helvetica", "", 11)
+            for _, row in dataset.iterrows():
+                prof = row.get("Profissional", "")
+                especialidade = row.get("Especialidade", "")
+                consultorio = row.get("Consultório", "")
+                crm = row.get("CRM", "")
+                total = _safe_int(row.get("Total Procedimentos"))
+                exames = _safe_int(row.get("Exames Solicitados"))
+                cirurgias = _safe_int(row.get("Cirurgias Solicitadas"))
+                rank = row.get("Rank")
+
+                total_txt = f"Total: {total}" if total is not None else ""
+                detalhes = []
+                if consultorio:
+                    detalhes.append(f"Consultorio: {consultorio}")
+                if crm and str(crm).strip():
+                    detalhes.append(f"CRM: {crm}")
+                if exames is not None:
+                    detalhes.append(f"Exames: {exames}")
+                if cirurgias is not None:
+                    detalhes.append(f"Cirurgias: {cirurgias}")
+                if total_txt:
+                    detalhes.insert(0, total_txt)
+
+                rank_txt = f"{rank}. " if rank is not None else ""
+                titulo = f"{rank_txt}{prof}" if prof else f"{rank_txt}Profissional"
+                if especialidade and especialidade != "Não informada":
+                    titulo = f"{titulo} - {especialidade}"
+
+                _write_line(titulo)
+                if detalhes:
+                    _write_line("; ".join(detalhes), height=5)
+                pdf.ln(1)
+            pdf.ln(2)
+
+        _write_ranking_section(
+            "Top profissionais por produtividade",
+            ranking_total_pdf,
+            min(limit_total, len(ranking_df)),
+        )
+        _write_ranking_section(
+            "Top solicitantes de exames",
+            ranking_exames_pdf,
+            min(limit_exames, len(ranking_df)),
+        )
+        _write_ranking_section(
+            "Top solicitantes de cirurgias",
+            ranking_cirurgias_pdf,
+            min(limit_cirurgias, len(ranking_df)),
+        )
 
     if med_df is not None and not med_df.empty:
         med_pdf = med_df.copy()
@@ -701,27 +772,45 @@ with st.container():
     if ranking_prod_total.empty:
         st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
     else:
-        ranking = ranking_prod_total.copy()
-        ranking = ranking.sort_values(
+        ranking_total = ranking_prod_total.sort_values(
             ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional", "Consultório"],
             ascending=[False, False, False, True, True],
         ).reset_index(drop=True)
-        ranking.insert(0, "Rank", range(1, len(ranking) + 1))
+        ranking_total.insert(0, "Rank", range(1, len(ranking_total) + 1))
 
-        top_n_default = min(len(ranking), 10) if len(ranking) else 1
+        ranking_exames = ranking_prod_total.sort_values(
+            ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional", "Consultório"],
+            ascending=[False, False, False, True, True],
+        ).reset_index(drop=True)
+        ranking_exames.insert(0, "Rank", range(1, len(ranking_exames) + 1))
+
+        ranking_cirurgias = ranking_prod_total.sort_values(
+            ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional", "Consultório"],
+            ascending=[False, False, False, True, True],
+        ).reset_index(drop=True)
+        ranking_cirurgias.insert(0, "Rank", range(1, len(ranking_cirurgias) + 1))
+
+        top_n_default = min(len(ranking_total), 10) if len(ranking_total) else 1
         top_n = st.slider(
             "Quantidade de profissionais no ranking",
             min_value=1,
-            max_value=len(ranking),
+            max_value=len(ranking_total),
             value=top_n_default,
             key="ranking_produtividade_top",
         )
-        top_view = ranking.head(top_n)
 
-        destaque_registros = top_view.head(3).to_dict("records")
-        if destaque_registros:
-            destaque_cols = st.columns(len(destaque_registros))
-            for col, row in zip(destaque_cols, destaque_registros):
+        top_total = ranking_total.head(top_n)
+        top_exames = ranking_exames.head(top_n)
+        top_cirurgias = ranking_cirurgias.head(top_n)
+
+        tabs = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias"])
+
+        def _render_highlights(dataset: pd.DataFrame, label_col: str = "Etiqueta") -> None:
+            destaques = dataset.head(3).to_dict("records")
+            if not destaques:
+                return
+            destaque_cols = st.columns(len(destaques))
+            for col, row in zip(destaque_cols, destaques):
                 total = int(row.get("Total Procedimentos", 0))
                 exames = int(row.get("Exames Solicitados", 0))
                 cirurgias = int(row.get("Cirurgias Solicitadas", 0))
@@ -749,24 +838,28 @@ with st.container():
                     " • ".join(info_parts),
                 )
 
-        if not top_view.empty:
-            top_view_display = top_view.copy()
-            top_view_display["Total Solicitações"] = top_view_display["Total Procedimentos"]
-            fig_rank = px.bar(
-                top_view_display,
-                x="Total Solicitações",
-                y="Etiqueta",
+        def _render_chart(dataset: pd.DataFrame, value_col: str, title: str, label_col: str = "Etiqueta") -> None:
+            if dataset.empty:
+                st.info("Sem registros para os filtros atuais.")
+                return
+
+            display_df = dataset.copy()
+            display_df[value_col] = display_df[value_col].astype(int)
+            fig = px.bar(
+                display_df,
+                x=value_col,
+                y=label_col,
                 orientation="h",
-                color="Total Solicitações",
+                color=value_col,
                 color_continuous_scale="Blues",
-                title="Top profissionais por produtividade",
-                text="Total Solicitações",
+                title=title,
+                text=value_col,
             )
-            fig_rank.update_layout(coloraxis_showscale=False)
-            fig_rank.update_traces(
+            fig.update_layout(coloraxis_showscale=False)
+            fig.update_traces(
                 texttemplate="%{text}",
                 textposition="outside",
-                customdata=top_view_display[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                customdata=display_df[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
                 hovertemplate=(
                     "%{customdata[0]}º %{y}<br>"
                     "Consultório: %{customdata[1]}<br>"
@@ -775,11 +868,46 @@ with st.container():
                     "Cirurgias solicitadas: %{customdata[4]}<extra></extra>"
                 ),
             )
-            fig_rank.update_yaxes(
+            fig.update_yaxes(
                 categoryorder="array",
-                categoryarray=top_view_display["Etiqueta"].tolist()[::-1],
+                categoryarray=display_df[label_col].tolist()[::-1],
             )
-            st.plotly_chart(fig_rank, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tabs[0]:
+            _render_highlights(top_total)
+            if not top_total.empty:
+                total_display = top_total.copy()
+                total_display["Total Solicitações"] = total_display["Total Procedimentos"]
+                _render_chart(
+                    total_display,
+                    "Total Solicitações",
+                    "Top profissionais por produtividade",
+                )
+            else:
+                st.info("Sem registros para os filtros atuais.")
+
+        with tabs[1]:
+            _render_highlights(top_exames)
+            if not top_exames.empty:
+                _render_chart(
+                    top_exames,
+                    "Exames Solicitados",
+                    "Top profissionais por exames solicitados",
+                )
+            else:
+                st.info("Sem registros de exames para os filtros atuais.")
+
+        with tabs[2]:
+            _render_highlights(top_cirurgias)
+            if not top_cirurgias.empty:
+                _render_chart(
+                    top_cirurgias,
+                    "Cirurgias Solicitadas",
+                    "Top profissionais por cirurgias solicitadas",
+                )
+            else:
+                st.info("Sem registros de cirurgias para os filtros atuais.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -822,32 +950,90 @@ with st.container():
             ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
             ic6.metric("Médicos distintos no consultório", medicos_ind)
 
-            ranking_ind = pd.DataFrame()
+            ranking_ind_total = pd.DataFrame()
+            ranking_ind_exames = pd.DataFrame()
+            ranking_ind_cirurgias = pd.DataFrame()
+            empty_ind_cols = [
+                "Profissional",
+                "Especialidade",
+                "Consultório",
+                "CRM",
+                "Total Procedimentos",
+                "Exames Solicitados",
+                "Cirurgias Solicitadas",
+                "EtiquetaLocal",
+                "Rank",
+            ]
+            top_total_ind = pd.DataFrame(columns=empty_ind_cols)
+            top_exames_ind = pd.DataFrame(columns=empty_ind_cols)
+            top_cirurgias_ind = pd.DataFrame(columns=empty_ind_cols)
             sala_norm = _normalize_col(sala_detalhe)
             if ranking_prod_total.empty:
                 st.info("Sem dados de produtividade carregados para detalhar este consultório.")
             else:
-                ranking_ind = ranking_prod_total[ranking_prod_total["SalaNorm"] == sala_norm].copy()
-                if ranking_ind.empty:
+                ranking_ind_base = ranking_prod_total[ranking_prod_total["SalaNorm"] == sala_norm].copy()
+                if ranking_ind_base.empty:
                     st.info("Sem registros de produtividade para o consultório selecionado.")
                 else:
-                    ranking_ind = ranking_ind.sort_values(
+                    ranking_ind_total = ranking_ind_base.sort_values(
                         ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional"],
                         ascending=[False, False, False, True],
                     ).reset_index(drop=True)
-                    ranking_ind.insert(0, "Rank", range(1, len(ranking_ind) + 1))
-                    ranking_ind["EtiquetaLocal"] = ranking_ind.apply(
+                    ranking_ind_total.insert(0, "Rank", range(1, len(ranking_ind_total) + 1))
+                    ranking_ind_total["EtiquetaLocal"] = ranking_ind_total.apply(
                         lambda r: f"{r['Profissional']} - {r['Especialidade']}"
                         if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
                         else r.get("Profissional", ""),
                         axis=1,
                     )
 
-                    destaque_ind = ranking_ind.head(3).to_dict("records")
-                    if destaque_ind:
-                        st.markdown("#### Destaques de produtividade no consultório")
-                        destaque_cols_ind = st.columns(len(destaque_ind))
-                        for col, row in zip(destaque_cols_ind, destaque_ind):
+                    ranking_ind_exames = ranking_ind_base.sort_values(
+                        ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional"],
+                        ascending=[False, False, False, True],
+                    ).reset_index(drop=True)
+                    ranking_ind_exames.insert(0, "Rank", range(1, len(ranking_ind_exames) + 1))
+                    ranking_ind_exames["EtiquetaLocal"] = ranking_ind_exames.apply(
+                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                        else r.get("Profissional", ""),
+                        axis=1,
+                    )
+
+                    ranking_ind_cirurgias = ranking_ind_base.sort_values(
+                        ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional"],
+                        ascending=[False, False, False, True],
+                    ).reset_index(drop=True)
+                    ranking_ind_cirurgias.insert(0, "Rank", range(1, len(ranking_ind_cirurgias) + 1))
+                    ranking_ind_cirurgias["EtiquetaLocal"] = ranking_ind_cirurgias.apply(
+                        lambda r: f"{r['Profissional']} - {r['Especialidade']}"
+                        if r.get("Especialidade") and r.get("Especialidade") != "Não informada"
+                        else r.get("Profissional", ""),
+                        axis=1,
+                    )
+
+                    top_n_ind_default = min(len(ranking_ind_total), 10) if len(ranking_ind_total) else 1
+                    top_n_ind = st.slider(
+                        "Quantidade de profissionais no ranking do consultório",
+                        min_value=1,
+                        max_value=len(ranking_ind_total),
+                        value=top_n_ind_default,
+                        key=f"ranking_ind_top_{sala_norm}",
+                    )
+
+                    top_total_ind = ranking_ind_total.head(top_n_ind)
+                    top_exames_ind = ranking_ind_exames.head(top_n_ind)
+                    top_cirurgias_ind = ranking_ind_cirurgias.head(top_n_ind)
+
+                    st.markdown("#### Destaques de produtividade no consultório")
+                    tabs_ind = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias"])
+
+                    def _render_ind_highlights(dataset: pd.DataFrame) -> None:
+                        destaques = dataset.head(3).to_dict("records")
+                        if not destaques:
+                            st.info("Sem registros para os filtros atuais.")
+                            return
+                        destaque_cols_ind = st.columns(len(destaques))
+                        for col, row in zip(destaque_cols_ind, destaques):
                             total = int(row.get("Total Procedimentos", 0))
                             exames = int(row.get("Exames Solicitados", 0))
                             cirurgias = int(row.get("Cirurgias Solicitadas", 0))
@@ -870,6 +1056,60 @@ with st.container():
                                 " • ".join(delta_parts),
                             )
 
+                    def _render_ind_chart(dataset: pd.DataFrame, value_col: str, title: str) -> None:
+                        if dataset.empty:
+                            st.info("Sem registros para os filtros atuais.")
+                            return
+
+                        display_df = dataset.copy()
+                        display_df[value_col] = display_df[value_col].astype(int)
+                        fig = px.bar(
+                            display_df,
+                            x=value_col,
+                            y="EtiquetaLocal",
+                            orientation="h",
+                            title=title,
+                            text=value_col,
+                        )
+                        fig.update_traces(
+                            textposition="outside",
+                            customdata=display_df[["Rank", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                            hovertemplate=(
+                                "%{customdata[0]}º %{y}<br>"
+                                "Exames solicitados: %{customdata[1]}<br>"
+                                "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
+                            ),
+                        )
+                        fig.update_yaxes(
+                            categoryorder="array",
+                            categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    with tabs_ind[0]:
+                        _render_ind_highlights(top_total_ind)
+                        _render_ind_chart(
+                            top_total_ind.assign(**{"Total Solicitações": top_total_ind["Total Procedimentos"]}),
+                            "Total Solicitações",
+                            f"Produtividade no consultório {sala_detalhe}",
+                        )
+
+                    with tabs_ind[1]:
+                        _render_ind_highlights(top_exames_ind)
+                        _render_ind_chart(
+                            top_exames_ind,
+                            "Exames Solicitados",
+                            f"Exames solicitados no consultório {sala_detalhe}",
+                        )
+
+                    with tabs_ind[2]:
+                        _render_ind_highlights(top_cirurgias_ind)
+                        _render_ind_chart(
+                            top_cirurgias_ind,
+                            "Cirurgias Solicitadas",
+                            f"Cirurgias solicitadas no consultório {sala_detalhe}",
+                        )
+
             graf1, graf2 = st.columns(2)
             with graf1:
                 by_dia_ind = detalhe_base.groupby("Dia")["Ocupado"].mean().reset_index()
@@ -889,7 +1129,9 @@ with st.container():
                 fig_ind_turno.update_yaxes(range=[0, 100])
                 st.plotly_chart(fig_ind_turno, use_container_width=True)
 
-            top_med_ind = ranking_ind.head(10) if not ranking_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
+            top_med_ind = (
+                top_total_ind if not top_total_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
+            )
             if not top_med_ind.empty:
                 top_med_ind_display = top_med_ind.copy()
                 top_med_ind_display["Total Solicitações"] = top_med_ind_display["Total Procedimentos"]
@@ -1376,6 +1618,11 @@ pdf_bytes = build_pdf_report(
     ranking_para_pdf,
     med_enriched if not med_df.empty else pd.DataFrame(),
     fdf,
+    ranking_limits={
+        "total": st.session_state.get("ranking_produtividade_top", 10),
+        "exames": st.session_state.get("ranking_produtividade_top", 10),
+        "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
+    },
 )
 
 csv = fdf.to_csv(index=False).encode("utf-8-sig")
