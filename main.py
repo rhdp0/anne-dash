@@ -327,6 +327,34 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df) -> bytes:
                     texto += f" | Valor total: {format_currency(row['Valor total aluguel'])}"
                 _write_line(texto, height=5)
 
+            if "Planos" in consult.columns and "Médico" in consult.columns:
+                consult_planos_pdf = consult.copy()
+                consult_planos_pdf["Planos"] = (
+                    consult_planos_pdf["Planos"].fillna("Nao informado").astype(str).str.strip()
+                )
+                consult_planos_pdf = (
+                    consult_planos_pdf.groupby(["Consultório", "Planos"])["Médico"].nunique().reset_index(name="Profissionais")
+                )
+                consult_planos_pdf = consult_planos_pdf[
+                    consult_planos_pdf["Profissionais"].gt(0)
+                ]
+                if not consult_planos_pdf.empty:
+                    consult_planos_pdf = consult_planos_pdf.sort_values(
+                        ["Consultório", "Profissionais", "Planos"],
+                        ascending=[True, False, True],
+                    )
+                    _write_line("Convênios ativos por consultório:")
+                    for consultorio_nome, grupo in consult_planos_pdf.groupby("Consultório"):
+                        grupo_top = grupo.head(5)
+                        convenios_txt = []
+                        for _, plano_row in grupo_top.iterrows():
+                            qtd = _safe_int(plano_row.get("Profissionais", 0)) or 0
+                            plano_nome = plano_row.get("Planos", "Nao informado") or "Nao informado"
+                            sufixo = "profissional" if qtd == 1 else "profissionais"
+                            convenios_txt.append(f"{plano_nome}: {qtd} {sufixo}")
+                        resumo_conv = "; ".join(convenios_txt) if convenios_txt else "Nenhum convênio informado"
+                        _write_line(f"- {consultorio_nome}: {resumo_conv}", height=5)
+
         if "Valor Aluguel" in med_pdf.columns:
             valores = med_pdf["Valor Aluguel"].dropna()
             if not valores.empty:
@@ -1006,6 +1034,7 @@ st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
 med_enriched = pd.DataFrame()
 consultorio_medico_agg = pd.DataFrame()
 consultorio_totais = pd.DataFrame()
+consultorio_planos = pd.DataFrame()
 
 if med_df.empty:
     st.warning("Não foram encontradas abas de **MÉDICOS** no arquivo. Os indicadores de plano/aluguel ficarão ocultos.")
@@ -1021,6 +1050,15 @@ else:
         )
         med_consult = med_consult.dropna(subset=["Consultório"])
         med_consult = med_consult[med_consult["Consultório"].astype(str).str.strip() != ""]
+
+        if (
+            sel_salas
+            and "Consultório" in med_consult.columns
+            and len(sel_salas) != len(salas)
+        ):
+            med_consult = med_consult[med_consult["Consultório"].isin(sel_salas)]
+        if sel_medicos:
+            med_consult = med_consult[med_consult["Médico"].isin(sel_medicos)]
 
         if not med_consult.empty:
             def _sum_ignore_missing(series: pd.Series):
@@ -1038,6 +1076,17 @@ else:
                 .agg(**agg_dict)
                 .reset_index()
             )
+
+            if "Planos" in med_consult.columns:
+                consultorio_planos = med_consult.copy()
+                consultorio_planos["Planos"] = (
+                    consultorio_planos["Planos"].fillna("Não informado").astype(str).str.strip()
+                )
+                consultorio_planos = (
+                    consultorio_planos.groupby(["Consultório", "Planos"])["Médico"]
+                    .nunique()
+                    .reset_index(name="Profissionais")
+                )
 
             agg_totais = {"Profissionais": ("Médico", "nunique")}
             if "Valor Aluguel" in med_consult.columns:
@@ -1144,6 +1193,50 @@ else:
                 st.info("Inclua 'Especialidade' e 'PLANOS'.")
 
         st.markdown("##### Indicadores por consultório")
+
+        if not consultorio_planos.empty:
+            st.markdown("###### Convênios por consultório")
+            gp1, gp2 = st.columns((2, 1))
+            with gp1:
+                planos_ord = consultorio_planos.sort_values(
+                    ["Consultório", "Planos"],
+                    ascending=[True, True],
+                )
+                fig_cons_planos = px.bar(
+                    planos_ord,
+                    x="Consultório",
+                    y="Profissionais",
+                    color="Planos",
+                    barmode="stack",
+                    title="Distribuição de convênios por consultório",
+                    text="Profissionais",
+                )
+                fig_cons_planos.update_traces(textposition="inside")
+                fig_cons_planos.update_layout(
+                    xaxis_title="Consultório",
+                    yaxis_title="Profissionais",
+                    legend_title_text="Plano",
+                )
+                st.plotly_chart(fig_cons_planos, use_container_width=True)
+            with gp2:
+                pivot_planos = (
+                    consultorio_planos.pivot_table(
+                        index="Consultório",
+                        columns="Planos",
+                        values="Profissionais",
+                        aggfunc="sum",
+                        fill_value=0,
+                    )
+                    .astype(int)
+                    .reset_index()
+                )
+                pivot_planos = pivot_planos.sort_values("Consultório")
+                st.dataframe(pivot_planos, use_container_width=True)
+        else:
+            st.info(
+                "Inclua 'Consultório', 'Planos' e 'Médico' para visualizar a distribuição de convênios por consultório."
+            )
+
         gc1, gc2 = st.columns(2)
         with gc1:
             if not consultorio_totais.empty and "Valor Aluguel Total" in consultorio_totais.columns:
