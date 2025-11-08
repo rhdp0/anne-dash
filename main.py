@@ -3,7 +3,8 @@ from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 import unicodedata
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+from contextlib import contextmanager
 import numpy as np
 
 import pandas as pd
@@ -16,34 +17,138 @@ st.set_page_config(page_title="Dashboard Consultórios", layout="wide")
 # --- Corporate styling ---
 st.markdown("""
 <style>
-.block-container {padding-top: 1.5rem;}
-div[data-testid="stMetricValue"] {color:#0F4C81;}
-h1, h2, h3 { color:#1f2a44; }
-section[data-testid="stSidebar"] {background-color:#f5f7fb}
-.section-title {
-    display: block;
-    background-color: #eef3fb;
-    border-left: 6px solid #0F4C81;
-    padding: 0.75rem 1rem;
-    margin: 2rem 0 1rem;
-    border-radius: 0.5rem;
-    font-size: clamp(1.35rem, 1.2rem + 1vw, 1.75rem);
-    line-height: 1.4;
-    color: #0F1A33;
+:root {
+    --primary-color: #1b3b5f;
+    --accent-color: #4c89c6;
+    --bg-soft: #f4f7fb;
+    --bg-card: #ffffff;
+    --text-color: #14213d;
+    --muted-color: #5f6c85;
 }
-.section-title strong {
-    color: inherit;
+
+.stApp {
+    background-color: var(--bg-soft);
+    color: var(--text-color);
+    font-family: "Segoe UI", "Inter", sans-serif;
 }
-.section-card {
+
+.block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 3rem;
+    max-width: 1200px;
+}
+
+section[data-testid="stSidebar"] {
     background-color: #ffffff;
-    border: 1px solid rgba(15, 26, 51, 0.08);
+    border-right: 1px solid rgba(27, 59, 95, 0.08);
+}
+
+section[data-testid="stSidebar"] > div {
+    padding: 1.5rem 1rem;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0;
+    margin: 0 0 1rem;
+    font-size: clamp(1.4rem, 1.1rem + 1vw, 1.9rem);
+    color: var(--primary-color);
+}
+
+.section-subtitle {
+    margin-top: -0.5rem;
+    margin-bottom: 1.5rem;
+    color: var(--muted-color);
+    font-size: 0.95rem;
+}
+
+.section-card {
+    background-color: var(--bg-card);
+    border-radius: 1rem;
+    padding: 2rem;
+    margin: 2.5rem 0;
+    border: 1px solid rgba(27, 59, 95, 0.08);
+    box-shadow: 0 18px 35px -20px rgba(20, 33, 61, 0.5);
+}
+
+.section-card > *:last-child {
+    margin-bottom: 0;
+}
+
+div[data-testid="stMetricValue"] {
+    color: var(--primary-color);
+    font-weight: 700;
+}
+
+div[data-testid="stMetricLabel"] {
+    color: var(--muted-color);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+}
+
+div[data-testid="stMetricDelta"] {
+    color: var(--accent-color);
+    font-weight: 500;
+}
+
+div[data-testid="stTabs"] button {
+    border-radius: 999px;
+    padding: 0.45rem 1.1rem;
+    border: none;
+    background-color: transparent;
+    color: var(--muted-color);
+    font-weight: 500;
+}
+
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    background-color: rgba(76, 137, 198, 0.12);
+    color: var(--primary-color);
+}
+
+.stDownloadButton button,
+.stButton button {
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    color: #ffffff;
+    border: none;
     border-radius: 0.75rem;
-    padding: 1.5rem;
-    margin: 2rem 0;
-    box-shadow: 0 10px 30px rgba(15, 26, 51, 0.08);
+    padding: 0.6rem 1.4rem;
+    font-weight: 600;
+}
+
+.stDownloadButton button:hover,
+.stButton button:hover {
+    opacity: 0.92;
+}
+
+a {
+    color: var(--accent-color);
 }
 </style>
 """, unsafe_allow_html=True)
+
+@contextmanager
+def section_block(title: str, description: Optional[str] = None, anchor: Optional[str] = None):
+    wrapper = st.container()
+    if anchor:
+        wrapper.markdown(f'<div id="{anchor}"></div>', unsafe_allow_html=True)
+    wrapper.markdown('<div class="section-card">', unsafe_allow_html=True)
+    wrapper.markdown(f'<h2 class="section-title">{title}</h2>', unsafe_allow_html=True)
+    if description:
+        wrapper.markdown(f'<p class="section-subtitle">{description}</p>', unsafe_allow_html=True)
+    content = wrapper.container()
+    try:
+        with content:
+            yield content
+    finally:
+        wrapper.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('<div id="topo"></div>', unsafe_allow_html=True)
 st.title("🏥 Dashboard de Ocupação dos Consultórios")
@@ -837,69 +942,96 @@ if not ranking_prod_total.empty:
         summary_metrics["Receita total (produtividade)"] = format_currency_value(total_receita_geral)
 
 if selected_section == "📊 Visão Geral":
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Consultórios selecionados", total_salas)
-    c2.metric("Slots (dia x turno x sala)", total_slots)
-    c3.metric("Slots livres", slots_livres)
-    c4.metric("Ocupados", ocupados)
+    with section_block(
+        "📊 Visão Geral",
+        description="Resumo executivo dos consultórios e turnos filtrados.",
+        anchor="visao-geral",
+    ) as sec:
+        c1, c2, c3, c4 = sec.columns(4)
+        c1.metric("Consultórios selecionados", total_salas)
+        c2.metric("Slots (dia × turno × sala)", total_slots)
+        c3.metric("Slots livres", slots_livres)
+        c4.metric("Ocupados", ocupados)
 
-    kc1, kc2 = st.columns(2)
-    kc1.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
-    kc2.metric("Médicos distintos (no filtro de sala/dia/turno)", medicos_distintos)
+        kc1, kc2 = sec.columns(2)
+        kc1.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
+        kc2.metric("Médicos distintos", medicos_distintos)
 
-    # ---------- Gráficos de ocupação (sem heatmap) com porcentagens nas barras ----------
-    colA, colB = st.columns(2)
-    with colA:
+        colA, colB = sec.columns(2)
         by_sala = fdf_base.groupby("Sala")["Ocupado"].mean().reset_index()
-        by_sala["Taxa de Ocupação (%)"] = (by_sala["Ocupado"]*100).round(1)
-        fig1 = px.bar(by_sala, x="Sala", y="Taxa de Ocupação (%)", title="Ocupação por Consultório (%)", text="Taxa de Ocupação (%)")
+        by_sala["Taxa de Ocupação (%)"] = (by_sala["Ocupado"] * 100).round(1)
+        fig1 = px.bar(
+            by_sala,
+            x="Sala",
+            y="Taxa de Ocupação (%)",
+            title="Ocupação por consultório",
+            text="Taxa de Ocupação (%)",
+        )
         fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig1.update_yaxes(range=[0,100])
-        st.plotly_chart(fig1, use_container_width=True)
+        fig1.update_yaxes(range=[0, 100])
+        colA.plotly_chart(fig1, use_container_width=True)
 
-    with colB:
         by_dia = fdf_base.groupby("Dia")["Ocupado"].mean().reset_index()
-        by_dia["Taxa de Ocupação (%)"] = (by_dia["Ocupado"]*100).round(1)
-        fig2 = px.bar(by_dia, x="Dia", y="Taxa de Ocupação (%)", title="Ocupação por Dia da Semana (%)", text="Taxa de Ocupação (%)")
+        by_dia["Taxa de Ocupação (%)"] = (by_dia["Ocupado"] * 100).round(1)
+        fig2 = px.bar(
+            by_dia,
+            x="Dia",
+            y="Taxa de Ocupação (%)",
+            title="Ocupação por dia da semana",
+            text="Taxa de Ocupação (%)",
+        )
         fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig2.update_yaxes(range=[0,100])
-        st.plotly_chart(fig2, use_container_width=True)
+        fig2.update_yaxes(range=[0, 100])
+        colB.plotly_chart(fig2, use_container_width=True)
 
-    colC, colD = st.columns(2)
-    with colC:
+        colC, colD = sec.columns(2)
         by_turno = fdf_base.groupby("Turno")["Ocupado"].mean().reset_index()
-        by_turno["Taxa de Ocupação (%)"] = (by_turno["Ocupado"]*100).round(1)
-        fig3 = px.bar(by_turno, x="Turno", y="Taxa de Ocupação (%)", title="Ocupação por Turno (%)", text="Taxa de Ocupação (%)")
+        by_turno["Taxa de Ocupação (%)"] = (by_turno["Ocupado"] * 100).round(1)
+        fig3 = px.bar(
+            by_turno,
+            x="Turno",
+            y="Taxa de Ocupação (%)",
+            title="Ocupação por turno",
+            text="Taxa de Ocupação (%)",
+        )
         fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig3.update_yaxes(range=[0,100])
-        st.plotly_chart(fig3, use_container_width=True)
+        fig3.update_yaxes(range=[0, 100])
+        colC.plotly_chart(fig3, use_container_width=True)
 
-    with colD:
-        top_med = (fdf[fdf["Ocupado"]]
-                   .groupby("Médico")
-                   .size()
-                   .reset_index(name="Turnos Utilizados")
-                   .sort_values("Turnos Utilizados", ascending=False)
-                   .head(15))
+        top_med = (
+            fdf[fdf["Ocupado"]]
+            .groupby("Médico")
+            .size()
+            .reset_index(name="Turnos Utilizados")
+            .sort_values("Turnos Utilizados", ascending=False)
+            .head(15)
+        )
         if not top_med.empty:
-            fig4 = px.bar(top_med, x="Turnos Utilizados", y="Médico", orientation="h", title="Top Médicos por Nº de Turnos", text="Turnos Utilizados")
+            fig4 = px.bar(
+                top_med,
+                x="Turnos Utilizados",
+                y="Médico",
+                orientation="h",
+                title="Top médicos por turnos utilizados",
+                text="Turnos Utilizados",
+            )
             fig4.update_traces(textposition="outside")
-            st.plotly_chart(fig4, use_container_width=True)
+            colD.plotly_chart(fig4, use_container_width=True)
         else:
-            st.info("Sem médicos ocupando slots nos filtros atuais.")
+            colD.info("Sem médicos ocupando slots nos filtros atuais.")
+
 
 if selected_section == "🏆 Ranking":
-    # ---------- Ranking de produtividade dos médicos ----------
-    st.markdown('<div id="ranking"></div>', unsafe_allow_html=True)
-    with st.container():
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<h2 class="section-title">🏆 Ranking de produtividade dos médicos</h2>', unsafe_allow_html=True)
-
+    with section_block(
+        "🏆 Ranking de produtividade dos médicos",
+        description="Comparativo completo dos profissionais considerando solicitações, cirurgias, exames e receita registrada.",
+        anchor="ranking",
+    ) as sec:
         if ranking_prod_total.empty:
-            st.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
+            sec.info("Sem dados nas abas de produtividade para gerar o ranking geral.")
         else:
             receita_total = ranking_prod_total["Receita"].sum()
-            col_receita_total, col_receita_medico, col_receita_consult = st.columns(3)
+            col_receita_total, col_receita_medico, col_receita_consult = sec.columns(3)
             col_receita_total.metric(
                 "Receita total registrada",
                 format_currency_value(receita_total) if receita_total else "—",
@@ -926,250 +1058,252 @@ if selected_section == "🏆 Ranking":
                 col_receita_consult.metric("Maior receita por consultório", "—", "Sem dados")
 
             ranking_total = ranking_prod_total.sort_values(
-                ["Total Procedimentos", "Cirurgias Solicitadas", "Exames Solicitados", "Profissional", "Consultório"],
+                [
+                    "Total Procedimentos",
+                    "Cirurgias Solicitadas",
+                    "Exames Solicitados",
+                    "Profissional",
+                    "Consultório",
+                ],
                 ascending=[False, False, False, True, True],
             ).reset_index(drop=True)
             ranking_total.insert(0, "Rank", range(1, len(ranking_total) + 1))
 
             ranking_exames = ranking_prod_total.sort_values(
-                ["Exames Solicitados", "Cirurgias Solicitadas", "Total Procedimentos", "Profissional", "Consultório"],
+                [
+                    "Exames Solicitados",
+                    "Cirurgias Solicitadas",
+                    "Total Procedimentos",
+                    "Profissional",
+                    "Consultório",
+                ],
                 ascending=[False, False, False, True, True],
             ).reset_index(drop=True)
             ranking_exames.insert(0, "Rank", range(1, len(ranking_exames) + 1))
 
             ranking_cirurgias = ranking_prod_total.sort_values(
-                ["Cirurgias Solicitadas", "Exames Solicitados", "Total Procedimentos", "Profissional", "Consultório"],
+                [
+                    "Cirurgias Solicitadas",
+                    "Exames Solicitados",
+                    "Total Procedimentos",
+                    "Profissional",
+                    "Consultório",
+                ],
                 ascending=[False, False, False, True, True],
             ).reset_index(drop=True)
             ranking_cirurgias.insert(0, "Rank", range(1, len(ranking_cirurgias) + 1))
 
-        ranking_receita = ranking_prod_total.sort_values(
-            ["Receita", "Total Procedimentos", "Profissional", "Consultório"],
-            ascending=[False, False, True, True],
-        ).reset_index(drop=True)
-        ranking_receita.insert(0, "Rank", range(1, len(ranking_receita) + 1))
+            ranking_receita = ranking_prod_total.sort_values(
+                ["Receita", "Total Procedimentos", "Profissional", "Consultório"],
+                ascending=[False, False, True, True],
+            ).reset_index(drop=True)
+            ranking_receita.insert(0, "Rank", range(1, len(ranking_receita) + 1))
 
-        top_n_default = min(len(ranking_total), 10) if len(ranking_total) else 1
-        top_n = st.slider(
-            "Quantidade de profissionais no ranking",
-            min_value=1,
-            max_value=len(ranking_total),
-            value=top_n_default,
-            key="ranking_produtividade_top",
-        )
-
-        top_total = ranking_total.head(top_n)
-        top_exames = ranking_exames.head(top_n)
-        top_cirurgias = ranking_cirurgias.head(top_n)
-        top_receita = ranking_receita.head(top_n)
-
-        tabs = st.tabs(["Produtividade Geral", "Top Exames", "Top Cirurgias", "Top Receita"])
-
-        def _render_highlights(dataset: pd.DataFrame, label_col: str = "Etiqueta") -> None:
-            destaques = dataset.head(3).to_dict("records")
-            if not destaques:
-                return
-            destaque_cols = st.columns(len(destaques))
-            for col, row in zip(destaque_cols, destaques):
-                total = int(row.get("Total Procedimentos", 0))
-                exames = int(row.get("Exames Solicitados", 0))
-                cirurgias = int(row.get("Cirurgias Solicitadas", 0))
-                receita_valor = float(row.get("Receita", 0) or 0)
-                profissional = row.get("Profissional", "")
-                especialidade = row.get("Especialidade", "")
-                consultorio = row.get("Consultório", "")
-                crm = row.get("CRM", "")
-                rank = row.get("Rank", "-")
-
-                titulo = f"{rank}º {profissional}" if profissional else f"{rank}º Profissional"
-                if especialidade and especialidade != "Não informada":
-                    titulo = f"{titulo} - {especialidade}"
-
-                info_parts = []
-                if consultorio:
-                    info_parts.append(consultorio)
-                if crm:
-                    info_parts.append(f"CRM {crm}")
-                info_parts.append(f"Exames: {exames}")
-                info_parts.append(f"Cirurgias: {cirurgias}")
-                if receita_valor:
-                    info_parts.append(f"Receita: {format_currency_value(receita_valor)}")
-
-                metric_value = f"{total} Solicitações"
-                if receita_valor:
-                    metric_value = format_currency_value(receita_valor)
-                    info_parts.insert(0, f"Solicitações: {total}")
-
-                col.metric(
-                    titulo,
-                    metric_value,
-                    " • ".join(info_parts),
-                )
-
-        def _render_chart(
-            dataset: pd.DataFrame,
-            value_col: str,
-            title: str,
-            label_col: str = "Etiqueta",
-            is_currency: bool = False,
-        ) -> None:
-            if dataset.empty:
-                st.info("Sem registros para os filtros atuais.")
-                return
-
-            display_df = dataset.copy()
-            display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
-            if is_currency:
-                display_df["__text"] = display_df[value_col].apply(format_currency_value)
+            if ranking_total.empty:
+                sec.info("Sem registros de produtividade para os filtros atuais.")
             else:
-                display_df[value_col] = display_df[value_col].round().astype(int)
-                display_df["__text"] = display_df[value_col]
-            fig = px.bar(
-                display_df,
-                x=value_col,
-                y=label_col,
-                orientation="h",
-                color=value_col,
-                color_continuous_scale="Blues",
-                title=title,
-                text="__text",
-            )
-            fig.update_layout(coloraxis_showscale=False)
-            if is_currency:
-                fig.update_traces(
-                    texttemplate="%{text}",
-                    textposition="outside",
-                    customdata=display_df[["Rank", "Consultório", "Especialidade", "Total Procedimentos"]],
-                    hovertemplate=(
-                        "%{customdata[0]}º %{y}<br>"
-                        "Consultório: %{customdata[1]}<br>"
-                        "Especialidade: %{customdata[2]}<br>"
-                        "Receita: %{text}<br>"
-                        "Total de procedimentos: %{customdata[3]}<extra></extra>"
-                    ),
+                max_slider = max(1, len(ranking_total))
+                top_n_default = min(max_slider, 10)
+                top_n = sec.slider(
+                    "Quantidade de profissionais no ranking",
+                    min_value=1,
+                    max_value=max_slider,
+                    value=top_n_default,
+                    key="ranking_produtividade_top",
                 )
-            else:
-                fig.update_traces(
-                    texttemplate="%{text}",
-                    textposition="outside",
-                    customdata=display_df[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
-                    hovertemplate=(
-                        "%{customdata[0]}º %{y}<br>"
-                        "Consultório: %{customdata[1]}<br>"
-                        "Especialidade: %{customdata[2]}<br>"
-                        "Exames solicitados: %{customdata[3]}<br>"
-                        "Cirurgias solicitadas: %{customdata[4]}<extra></extra>"
-                    ),
-                )
-            fig.update_yaxes(
-                categoryorder="array",
-                categoryarray=display_df[label_col].tolist()[::-1],
-            )
-            st.plotly_chart(fig, use_container_width=True)
 
-        with tabs[0]:
-            _render_highlights(top_total)
-            if not top_total.empty:
-                total_display = top_total.copy()
-                total_display["Total Solicitações"] = total_display["Total Procedimentos"]
-                _render_chart(
-                    total_display,
-                    "Total Solicitações",
-                    "Top profissionais por produtividade",
-                )
-            else:
-                st.info("Sem registros para os filtros atuais.")
+                top_total = ranking_total.head(top_n)
+                top_exames = ranking_exames.head(top_n)
+                top_cirurgias = ranking_cirurgias.head(top_n)
+                top_receita = ranking_receita.head(top_n)
 
-        with tabs[1]:
-            _render_highlights(top_exames)
-            if not top_exames.empty:
-                _render_chart(
-                    top_exames,
-                    "Exames Solicitados",
-                    "Top profissionais por exames solicitados",
+                tab_total, tab_exames, tab_cirurgias, tab_receita = sec.tabs(
+                    ["Produtividade Geral", "Top Exames", "Top Cirurgias", "Top Receita"]
                 )
-            else:
-                st.info("Sem registros de exames para os filtros atuais.")
 
-        with tabs[2]:
-            _render_highlights(top_cirurgias)
-            if not top_cirurgias.empty:
-                _render_chart(
-                    top_cirurgias,
-                    "Cirurgias Solicitadas",
-                    "Top profissionais por cirurgias solicitadas",
-                )
-            else:
-                st.info("Sem registros de cirurgias para os filtros atuais.")
+                def _render_highlights(container, dataset):
+                    destaques = dataset.head(3).to_dict("records")
+                    if not destaques:
+                        container.info("Sem registros para os filtros atuais.")
+                        return
+                    destaque_cols = container.columns(len(destaques))
+                    for col, row in zip(destaque_cols, destaques):
+                        total = int(row.get("Total Procedimentos", 0))
+                        exames = int(row.get("Exames Solicitados", 0))
+                        cirurgias = int(row.get("Cirurgias Solicitadas", 0))
+                        receita_valor = float(row.get("Receita", 0) or 0)
+                        profissional = row.get("Profissional", "")
+                        especialidade = row.get("Especialidade", "")
+                        consultorio = row.get("Consultório", "")
+                        rank = row.get("Rank", "-")
 
-        with tabs[3]:
-            _render_highlights(top_receita)
-            if not top_receita.empty:
-                _render_chart(
-                    top_receita,
-                    "Receita",
-                    "Top profissionais por receita",
-                    is_currency=True,
-                )
-            else:
-                st.info("Sem registros de receita para os filtros atuais.")
+                        titulo = f"{rank}º {profissional}" if profissional else f"{rank}º Profissional"
+                        if especialidade and especialidade != "Não informada":
+                            titulo = f"{titulo} - {especialidade}"
+                        if consultorio:
+                            titulo = f"{titulo} ({consultorio})"
 
-        if not receita_por_consultorio.empty or not receita_por_medico.empty:
-            st.markdown("#### Distribuição de receita consolidada")
-            graf_receita_consult, graf_receita_medico = st.columns(2)
+                        metric_value = f"{total} Solicitações"
+                        delta_parts = [f"Exames: {exames}", f"Cirurgias: {cirurgias}"]
+                        if receita_valor:
+                            metric_value = format_currency_value(receita_valor)
+                            delta_parts.insert(0, f"Solicitações: {total}")
+                            delta_parts.append(f"Receita: {format_currency_value(receita_valor)}")
+                        col.metric(titulo, metric_value, " • ".join(delta_parts))
 
-            if not receita_por_consultorio.empty:
-                consult_display = receita_por_consultorio.head(15).copy()
-                consult_display["Receita Formatada"] = consult_display["Receita Total"].apply(
-                    format_currency_value
-                )
-                fig_receita_consult = px.bar(
-                    consult_display,
-                    x="Receita Total",
-                    y="Consultório",
-                    orientation="h",
-                    title="Top consultórios por receita",
-                    text="Receita Formatada",
-                )
-                fig_receita_consult.update_traces(textposition="outside")
-                fig_receita_consult.update_yaxes(
-                    categoryorder="array",
-                    categoryarray=consult_display["Consultório"].tolist()[::-1],
-                )
-                graf_receita_consult.plotly_chart(fig_receita_consult, use_container_width=True)
-            else:
-                graf_receita_consult.info("Sem dados de receita por consultório.")
+                def _render_chart(container, dataset, value_col, title, label_col="Etiqueta", is_currency=False):
+                    if dataset.empty:
+                        container.info("Sem registros para os filtros atuais.")
+                        return
 
-            if not receita_por_medico.empty:
-                med_display = receita_por_medico.head(15).copy()
-                med_display["Receita Formatada"] = med_display["Receita Total"].apply(
-                    format_currency_value
-                )
-                fig_receita_medico = px.bar(
-                    med_display,
-                    x="Receita Total",
-                    y="Profissional",
-                    orientation="h",
-                    title="Top médicos por receita consolidada",
-                    text="Receita Formatada",
-                )
-                fig_receita_medico.update_traces(textposition="outside")
-                fig_receita_medico.update_yaxes(
-                    categoryorder="array",
-                    categoryarray=med_display["Profissional"].tolist()[::-1],
-                )
-                graf_receita_medico.plotly_chart(fig_receita_medico, use_container_width=True)
-            else:
-                graf_receita_medico.info("Sem dados de receita por médico consolidada.")
+                    display_df = dataset.copy()
+                    display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
+                    if is_currency:
+                        display_df["__text"] = display_df[value_col].apply(format_currency_value)
+                    else:
+                        display_df[value_col] = display_df[value_col].round().astype(int)
+                        display_df["__text"] = display_df[value_col]
 
-    st.markdown('</div>', unsafe_allow_html=True)
+                    fig = px.bar(
+                        display_df,
+                        x=value_col,
+                        y=label_col,
+                        orientation="h",
+                        color=value_col,
+                        color_continuous_scale="Blues",
+                        title=title,
+                        text="__text",
+                    )
+                    fig.update_layout(coloraxis_showscale=False)
+                    if is_currency:
+                        fig.update_traces(
+                            texttemplate="%{text}",
+                            textposition="outside",
+                            customdata=display_df[["Rank", "Consultório", "Especialidade", "Total Procedimentos"]],
+                            hovertemplate=(
+                                "%{customdata[0]}º %{y}<br>"
+                                "Consultório: %{customdata[1]}<br>"
+                                "Especialidade: %{customdata[2]}<br>"
+                                "Receita: %{text}<br>"
+                                "Total de procedimentos: %{customdata[3]}<extra></extra>"
+                            ),
+                        )
+                    else:
+                        fig.update_traces(
+                            texttemplate="%{text}",
+                            textposition="outside",
+                            customdata=display_df[["Rank", "Consultório", "Especialidade", "Exames Solicitados", "Cirurgias Solicitadas"]],
+                            hovertemplate=(
+                                "%{customdata[0]}º %{y}<br>"
+                                "Consultório: %{customdata[1]}<br>"
+                                "Especialidade: %{customdata[2]}<br>"
+                                "Exames solicitados: %{customdata[3]}<br>"
+                                "Cirurgias solicitadas: %{customdata[4]}<extra></extra>"
+                            ),
+                        )
+                    fig.update_yaxes(
+                        categoryorder="array",
+                        categoryarray=display_df[label_col].tolist()[::-1],
+                    )
+                    container.plotly_chart(fig, use_container_width=True)
 
+                with tab_total:
+                    _render_highlights(tab_total, top_total)
+                    if not top_total.empty:
+                        total_display = top_total.copy()
+                        total_display["Total Solicitações"] = total_display["Total Procedimentos"]
+                        _render_chart(
+                            tab_total,
+                            total_display,
+                            "Total Solicitações",
+                            "Top profissionais por produtividade",
+                        )
+
+                with tab_exames:
+                    _render_highlights(tab_exames, top_exames)
+                    if not top_exames.empty:
+                        _render_chart(
+                            tab_exames,
+                            top_exames,
+                            "Exames Solicitados",
+                            "Top profissionais por exames solicitados",
+                        )
+
+                with tab_cirurgias:
+                    _render_highlights(tab_cirurgias, top_cirurgias)
+                    if not top_cirurgias.empty:
+                        _render_chart(
+                            tab_cirurgias,
+                            top_cirurgias,
+                            "Cirurgias Solicitadas",
+                            "Top profissionais por cirurgias solicitadas",
+                        )
+
+                with tab_receita:
+                    _render_highlights(tab_receita, top_receita)
+                    if not top_receita.empty:
+                        _render_chart(
+                            tab_receita,
+                            top_receita,
+                            "Receita",
+                            "Top profissionais por receita",
+                            is_currency=True,
+                        )
+
+                if not receita_por_consultorio.empty or not receita_por_medico.empty:
+                    sec.markdown("#### Distribuição de receita consolidada")
+                    graf_receita_consult, graf_receita_medico = sec.columns(2)
+
+                    if not receita_por_consultorio.empty:
+                        consult_display = receita_por_consultorio.head(15).copy()
+                        consult_display["Receita Formatada"] = consult_display["Receita Total"].apply(
+                            format_currency_value
+                        )
+                        fig_receita_consult = px.bar(
+                            consult_display,
+                            x="Receita Total",
+                            y="Consultório",
+                            orientation="h",
+                            title="Top consultórios por receita",
+                            text="Receita Formatada",
+                        )
+                        fig_receita_consult.update_traces(textposition="outside")
+                        fig_receita_consult.update_yaxes(
+                            categoryorder="array",
+                            categoryarray=consult_display["Consultório"].tolist()[::-1],
+                        )
+                        graf_receita_consult.plotly_chart(fig_receita_consult, use_container_width=True)
+                    else:
+                        graf_receita_consult.info("Sem dados de receita por consultório.")
+
+                    if not receita_por_medico.empty:
+                        med_display = receita_por_medico.head(15).copy()
+                        med_display["Receita Formatada"] = med_display["Receita Total"].apply(
+                            format_currency_value
+                        )
+                        fig_receita_medico = px.bar(
+                            med_display,
+                            x="Receita Total",
+                            y="Profissional",
+                            orientation="h",
+                            title="Top médicos por receita consolidada",
+                            text="Receita Formatada",
+                        )
+                        fig_receita_medico.update_traces(textposition="outside")
+                        fig_receita_medico.update_yaxes(
+                            categoryorder="array",
+                            categoryarray=med_display["Profissional"].tolist()[::-1],
+                        )
+                        graf_receita_medico.plotly_chart(fig_receita_medico, use_container_width=True)
+                    else:
+                        graf_receita_medico.info("Sem dados de receita por médico consolidada.")
 if selected_section == "🔍 Consultórios":
     # ---------- Visão individual por consultório ----------
-    st.markdown('<div id="consultorio"></div>', unsafe_allow_html=True)
-    with st.container():
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<h2 class="section-title">🔍 Indicadores individuais por consultório</h2>', unsafe_allow_html=True)
+    with section_block(
+        "🔍 Indicadores individuais por consultório",
+        description="Análise aprofundada das salas selecionadas com destaque de produtividade.",
+        anchor="consultorio",
+    ):
 
         salas_disponiveis = sorted(df["Sala"].dropna().unique().tolist())
         if not salas_disponiveis:
@@ -1511,8 +1645,6 @@ if selected_section == "🔍 Consultórios":
                     )
                     st.plotly_chart(fig_top_receita, use_container_width=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
 # ---------- Integração das abas MÉDICOS (1, 2, 3...) ----------
 def load_medicos_from_excel(excel: pd.ExcelFile):
     frames = []
@@ -1698,13 +1830,14 @@ else:
                 )
 
 if selected_section == "💼 Planos & Aluguel":
-    st.markdown('<div id="planos"></div>', unsafe_allow_html=True)
     if medicos_warning:
         st.warning(medicos_warning)
     else:
-        with st.container():
-            st.markdown('<div class="section-card">', unsafe_allow_html=True)
-            st.markdown('<h2 class="section-title">💼 Indicador: PLANOS × Aluguel × Profissionais</h2>', unsafe_allow_html=True)
+        with section_block(
+            "💼 Indicador: PLANOS × Aluguel × Profissionais",
+            description="Integra convênios, valores de aluguel e atuação por consultório para orientar decisões comerciais.",
+            anchor="planos",
+        ):
 
             # KPIs deste bloco
             tot_prof = med_enriched["Médico"].nunique()
@@ -1772,24 +1905,36 @@ if selected_section == "💼 Planos & Aluguel":
                 fig9.update_traces(textposition="outside")
                 st.plotly_chart(fig9, use_container_width=True)
 
-            g3, g4 = st.columns(2)
-            with g3:
-                if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
-                    esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
-                    fig10 = px.bar(esp_avg, x="Valor médio (R$)", y="Especialidade", orientation="h", title="Valor médio de aluguel por especialidade", text="Valor médio (R$)")
-                    fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
-                    st.plotly_chart(fig10, use_container_width=True)
-                else:
-                    st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
-            with g4:
-                if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
-                    plano_esp = med_enriched.groupby(["Especialidade","Planos"])["Médico"].nunique().reset_index(name="Profissionais")
-                    fig11 = px.bar(plano_esp, x="Especialidade", y="Profissionais", color="Planos", barmode="group",
-                                   title="Profissionais por especialidade × PLANOS", text="Profissionais")
-                    fig11.update_traces(textposition="outside")
-                    st.plotly_chart(fig11, use_container_width=True)
-                else:
-                    st.info("Inclua 'Especialidade' e 'PLANOS'.")
+            if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
+                esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
+                fig10 = px.bar(
+                    esp_avg,
+                    x="Valor médio (R$)",
+                    y="Especialidade",
+                    orientation="h",
+                    title="Valor médio de aluguel por especialidade",
+                    text="Valor médio (R$)",
+                )
+                fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
+                st.plotly_chart(fig10, use_container_width=True)
+            else:
+                st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
+
+            if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
+                plano_esp = med_enriched.groupby(["Especialidade", "Planos"])["Médico"].nunique().reset_index(name="Profissionais")
+                fig11 = px.bar(
+                    plano_esp,
+                    x="Especialidade",
+                    y="Profissionais",
+                    color="Planos",
+                    barmode="group",
+                    title="Profissionais por especialidade × PLANOS",
+                    text="Profissionais",
+                )
+                fig11.update_traces(textposition="outside")
+                st.plotly_chart(fig11, use_container_width=True)
+            else:
+                st.info("Inclua 'Especialidade' e 'PLANOS'.")
 
             st.markdown("##### Indicadores por consultório")
 
@@ -1953,48 +2098,55 @@ if selected_section == "💼 Planos & Aluguel":
                 use_container_width=True,
             )
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
-
 if selected_section == "📋 Agenda":
     # ---------- Detalhamento ----------
-    st.markdown('<div id="agenda"></div>', unsafe_allow_html=True)
-    st.markdown('<h2 class="section-title">📋 Agenda Detalhada (Tabela)</h2>', unsafe_allow_html=True)
-    st.dataframe(
-        fdf.sort_values(["Sala","Dia","Turno"]).reset_index(drop=True)[["Sala","Dia","Turno","Médico"]],
-        use_container_width=True
-    )
+    with section_block(
+        "📋 Agenda Detalhada (Tabela)",
+        description="Visualize, exporte e compartilhe a agenda filtrada em diferentes formatos.",
+        anchor="agenda",
+    ) as sec:
+        sec.dataframe(
+            fdf.sort_values(["Sala", "Dia", "Turno"]).reset_index(drop=True)[
+                ["Sala", "Dia", "Turno", "Médico"]
+            ],
+            use_container_width=True,
+        )
 
-    ranking_para_pdf = ranking_prod_total.copy()
-    if not ranking_para_pdf.empty:
-        if sel_salas:
-            ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
-        if sel_medicos:
-            ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
+        ranking_para_pdf = ranking_prod_total.copy()
+        if not ranking_para_pdf.empty:
+            if sel_salas:
+                ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
+            if sel_medicos:
+                ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
 
-    pdf_bytes = build_pdf_report(
-        summary_metrics,
-        ranking_para_pdf,
-        med_enriched if not med_df.empty else pd.DataFrame(),
-        fdf,
-        ranking_limits={
-            "total": st.session_state.get("ranking_produtividade_top", 10),
-            "exames": st.session_state.get("ranking_produtividade_top", 10),
-            "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
-            "receita": st.session_state.get("ranking_produtividade_top", 10),
-        },
-    )
+        pdf_bytes = build_pdf_report(
+            summary_metrics,
+            ranking_para_pdf,
+            med_enriched if not med_df.empty else pd.DataFrame(),
+            fdf,
+            ranking_limits={
+                "total": st.session_state.get("ranking_produtividade_top", 10),
+                "exames": st.session_state.get("ranking_produtividade_top", 10),
+                "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
+                "receita": st.session_state.get("ranking_produtividade_top", 10),
+            },
+        )
 
-    csv = fdf.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "📄 Baixar relatório completo (PDF)",
-        data=pdf_bytes,
-        file_name="dashboard_consultorios.pdf",
-        mime="application/pdf",
-    )
-    st.download_button("⬇️ Baixar dados filtrados (CSV)", data=csv, file_name="agenda_filtrada.csv", mime="text/csv")
+        csv = fdf.to_csv(index=False).encode("utf-8-sig")
+        sec.download_button(
+            "📄 Baixar relatório completo (PDF)",
+            data=pdf_bytes,
+            file_name="dashboard_consultorios.pdf",
+            mime="application/pdf",
+        )
+        sec.download_button(
+            "⬇️ Baixar dados filtrados (CSV)",
+            data=csv,
+            file_name="agenda_filtrada.csv",
+            mime="text/csv",
+        )
 
-    st.markdown(
-        '<div style="text-align: right; margin-top: 2rem;"><a href="#topo">⬆️ Voltar ao topo</a></div>',
-        unsafe_allow_html=True,
-    )
+        sec.markdown(
+            '<div style="text-align: right; margin-top: 2rem;"><a href="#topo">⬆️ Voltar ao topo</a></div>',
+            unsafe_allow_html=True,
+        )
