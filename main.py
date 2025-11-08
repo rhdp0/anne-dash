@@ -1614,7 +1614,11 @@ if selected_section == "🔍 Consultórios":
                         categoryorder="array",
                         categoryarray=top_med_ind_display["EtiquetaLocal"].tolist()[::-1],
                     )
-                    st.plotly_chart(fig_top_ind, use_container_width=True)
+                    st.plotly_chart(
+                        fig_top_ind,
+                        use_container_width=True,
+                        key=f"consultorio_prod_{sala_norm}",
+                    )
 
                 if not top_receita_ind.empty and top_receita_ind["Receita"].sum() > 0:
                     top_receita_display = top_receita_ind.copy()
@@ -1642,7 +1646,11 @@ if selected_section == "🔍 Consultórios":
                         categoryorder="array",
                         categoryarray=top_receita_display["EtiquetaLocal"].tolist()[::-1],
                     )
-                    st.plotly_chart(fig_top_receita, use_container_width=True)
+                    st.plotly_chart(
+                        fig_top_receita,
+                        use_container_width=True,
+                        key=f"consultorio_receita_{sala_norm}",
+                    )
 
 # ---------- Integração das abas MÉDICOS (1, 2, 3...) ----------
 def load_medicos_from_excel(excel: pd.ExcelFile):
