@@ -1905,24 +1905,36 @@ if selected_section == "💼 Planos & Aluguel":
                 fig9.update_traces(textposition="outside")
                 st.plotly_chart(fig9, use_container_width=True)
 
-            g3, g4 = st.columns(2)
-            with g3:
-                if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
-                    esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
-                    fig10 = px.bar(esp_avg, x="Valor médio (R$)", y="Especialidade", orientation="h", title="Valor médio de aluguel por especialidade", text="Valor médio (R$)")
-                    fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
-                    st.plotly_chart(fig10, use_container_width=True)
-                else:
-                    st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
-            with g4:
-                if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
-                    plano_esp = med_enriched.groupby(["Especialidade","Planos"])["Médico"].nunique().reset_index(name="Profissionais")
-                    fig11 = px.bar(plano_esp, x="Especialidade", y="Profissionais", color="Planos", barmode="group",
-                                   title="Profissionais por especialidade × PLANOS", text="Profissionais")
-                    fig11.update_traces(textposition="outside")
-                    st.plotly_chart(fig11, use_container_width=True)
-                else:
-                    st.info("Inclua 'Especialidade' e 'PLANOS'.")
+            if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
+                esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
+                fig10 = px.bar(
+                    esp_avg,
+                    x="Valor médio (R$)",
+                    y="Especialidade",
+                    orientation="h",
+                    title="Valor médio de aluguel por especialidade",
+                    text="Valor médio (R$)",
+                )
+                fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
+                st.plotly_chart(fig10, use_container_width=True)
+            else:
+                st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
+
+            if "Planos" in med_enriched.columns and "Especialidade" in med_enriched.columns:
+                plano_esp = med_enriched.groupby(["Especialidade", "Planos"])["Médico"].nunique().reset_index(name="Profissionais")
+                fig11 = px.bar(
+                    plano_esp,
+                    x="Especialidade",
+                    y="Profissionais",
+                    color="Planos",
+                    barmode="group",
+                    title="Profissionais por especialidade × PLANOS",
+                    text="Profissionais",
+                )
+                fig11.update_traces(textposition="outside")
+                st.plotly_chart(fig11, use_container_width=True)
+            else:
+                st.info("Inclua 'Especialidade' e 'PLANOS'.")
 
             st.markdown("##### Indicadores por consultório")
 
