@@ -12,6 +12,51 @@ import streamlit as st
 import plotly.express as px
 from fpdf import FPDF
 
+
+# --- PDF identity constants ---
+PDF_PRIMARY_COLOR = (27, 59, 95)
+PDF_ACCENT_COLOR = (76, 137, 198)
+PDF_TEXT_COLOR = (20, 33, 61)
+PDF_MUTED_COLOR = (95, 108, 133)
+PDF_SOFT_BACKGROUND = (244, 247, 251)
+PDF_WHITE = (255, 255, 255)
+
+PDF_MARGIN = 18
+PDF_SECTION_GAP = 8
+PDF_CARD_GAP = 6
+PDF_CARD_HEIGHT = 26
+PDF_CARD_PADDING = 4
+
+PDF_TITLE_FONT = ("Helvetica", "B", 28)
+PDF_SUBTITLE_FONT = ("Helvetica", "", 12)
+PDF_SECTION_TITLE_FONT = ("Helvetica", "B", 16)
+PDF_SECTION_SUBTITLE_FONT = ("Helvetica", "", 11)
+PDF_BODY_FONT = ("Helvetica", "", 10)
+PDF_SUBSECTION_FONT = ("Helvetica", "B", 12)
+PDF_KPI_VALUE_FONT = ("Helvetica", "B", 16)
+PDF_KPI_LABEL_FONT = ("Helvetica", "", 9)
+
+
+class DashboardPDF(FPDF):
+    """Styled PDF with consistent footer for the dashboard report."""
+
+    def __init__(self, data_source: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.data_source = data_source
+        self.generated_at = datetime.now()
+
+    def footer(self):
+        self.set_y(-15)
+        family, style, _ = PDF_BODY_FONT
+        self.set_font(family, style, 8)
+        self.set_text_color(*PDF_MUTED_COLOR)
+        footer_text = (
+            f"Fonte: {self.data_source} | "
+            f"Gerado em {self.generated_at.strftime('%d/%m/%Y %H:%M')} | "
+            f"Página {self.page_no()}"
+        )
+        self.multi_cell(0, 4, _sanitize_pdf_text(footer_text), align="C")
+
 st.set_page_config(page_title="Dashboard Consultórios", layout="wide")
 
 # --- Corporate styling ---
@@ -280,22 +325,156 @@ def _sanitize_pdf_text(text: str) -> str:
 
 
 def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_limits=None) -> bytes:
-    pdf = FPDF()
-    pdf.set_left_margin(15)
-    pdf.set_right_margin(15)
-    pdf.set_top_margin(15)
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
+    data_source = globals().get("fonte", "Origem não informada")
+    pdf = DashboardPDF(data_source=_sanitize_pdf_text(str(data_source)))
+    pdf.set_margins(PDF_MARGIN, PDF_MARGIN, PDF_MARGIN)
+    pdf.set_auto_page_break(auto=True, margin=PDF_MARGIN)
+    pdf.alias_nb_pages()
 
     effective_width = pdf.w - pdf.l_margin - pdf.r_margin
+    sections_index: List[Tuple[str, int]] = []
 
-    def _write_line(text: str, height: float = 6):
+    def set_body_font():
+        family, style, size = PDF_BODY_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_TEXT_COLOR)
+
+    def draw_cover_page():
+        pdf.add_page()
+
+        pdf.set_fill_color(*PDF_PRIMARY_COLOR)
+        pdf.rect(0, 0, pdf.w, pdf.h * 0.45, "F")
+        pdf.set_fill_color(*PDF_SOFT_BACKGROUND)
+        pdf.rect(0, pdf.h * 0.45, pdf.w, pdf.h * 0.55, "F")
+
+        pdf.set_xy(pdf.l_margin, 40)
+        family, style, size = PDF_TITLE_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(255, 255, 255)
+        pdf.multi_cell(
+            effective_width,
+            12,
+            _sanitize_pdf_text("Relatório Completo"),
+        )
+
+        family, style, size = PDF_SUBTITLE_FONT
+        pdf.set_font(family, style, size)
+        pdf.multi_cell(
+            effective_width,
+            8,
+            _sanitize_pdf_text("Dashboard de Ocupação dos Consultórios"),
+        )
+
+        block_x = pdf.l_margin
+        block_y = pdf.get_y() + 10
+        block_w = effective_width
+        block_h = 60
+        pdf.set_fill_color(*PDF_WHITE)
+        pdf.set_draw_color(*PDF_ACCENT_COLOR)
+        pdf.set_line_width(0.4)
+        pdf.rect(block_x, block_y, block_w, block_h, "DF")
+
+        pdf.set_xy(block_x + PDF_CARD_PADDING, block_y + PDF_CARD_PADDING)
+        family, style, size = PDF_SECTION_SUBTITLE_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_PRIMARY_COLOR)
+        pdf.cell(0, 6, _sanitize_pdf_text("Sobre este relatório"), ln=1)
+
+        set_body_font()
+        pdf.set_x(block_x + PDF_CARD_PADDING)
+        about_lines = [
+            "Panorama executivo com indicadores de produtividade e agenda.",
+            f"Fonte dos dados: {data_source}.",
+            "Geração automática via Dashboard Consultórios.",
+        ]
+        for line in about_lines:
+            pdf.multi_cell(
+                block_w - 2 * PDF_CARD_PADDING,
+                6,
+                _sanitize_pdf_text(line),
+            )
+        pdf.set_y(block_y + block_h + 12)
+
+        set_body_font()
+
+    def draw_section_header(title: str, subtitle: Optional[str] = None):
+        if pdf.get_y() < PDF_MARGIN:
+            pdf.set_y(PDF_MARGIN)
+        start_y = pdf.get_y()
+        pdf.set_fill_color(*PDF_ACCENT_COLOR)
+        pdf.rect(pdf.l_margin, start_y, 4, 12, "F")
+        pdf.set_xy(pdf.l_margin + 8, start_y)
+
+        family, style, size = PDF_SECTION_TITLE_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_PRIMARY_COLOR)
+        pdf.cell(0, 10, _sanitize_pdf_text(title), ln=1)
+
+        if subtitle:
+            family, style, size = PDF_SECTION_SUBTITLE_FONT
+            pdf.set_font(family, style, size)
+            pdf.set_text_color(*PDF_MUTED_COLOR)
+            pdf.multi_cell(0, 6, _sanitize_pdf_text(subtitle))
+
+        pdf.ln(2)
+        set_body_font()
+
+    def draw_subsection_header(title: str):
+        family, style, size = PDF_SUBSECTION_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_ACCENT_COLOR)
+        pdf.cell(0, 8, _sanitize_pdf_text(title), ln=1)
+        set_body_font()
+
+    def write_body_line(text: str, height: float = 6):
         sanitized = _sanitize_pdf_text(text)
         if sanitized:
-            pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(effective_width, height, sanitized)
+            pdf.multi_cell(0, height, sanitized)
         else:
             pdf.ln(height)
+
+    def draw_kpi_cards(metrics):
+        if not metrics:
+            return
+
+        cards_per_row = 2
+        card_width = (effective_width - PDF_CARD_GAP * (cards_per_row - 1)) / cards_per_row
+        for idx, (label, value) in enumerate(metrics.items()):
+            if pdf.get_y() + PDF_CARD_HEIGHT > pdf.page_break_trigger:
+                pdf.add_page()
+                set_body_font()
+
+            column = idx % cards_per_row
+            x = pdf.l_margin + column * (card_width + PDF_CARD_GAP)
+            y = pdf.get_y()
+
+            pdf.set_fill_color(*PDF_SOFT_BACKGROUND)
+            pdf.set_draw_color(*PDF_ACCENT_COLOR)
+            pdf.set_line_width(0.3)
+            pdf.rect(x, y, card_width, PDF_CARD_HEIGHT, "DF")
+
+            inner_x = x + PDF_CARD_PADDING
+            inner_width = card_width - 2 * PDF_CARD_PADDING
+
+            family, style, size = PDF_KPI_LABEL_FONT
+            pdf.set_font(family, style, size)
+            pdf.set_text_color(*PDF_MUTED_COLOR)
+            pdf.set_xy(inner_x, y + 4)
+            pdf.multi_cell(inner_width, 5, _sanitize_pdf_text(str(label)))
+
+            family, style, size = PDF_KPI_VALUE_FONT
+            pdf.set_font(family, style, size)
+            pdf.set_text_color(*PDF_PRIMARY_COLOR)
+            pdf.set_xy(inner_x, y + PDF_CARD_HEIGHT / 2)
+            pdf.cell(inner_width, 6, _sanitize_pdf_text(str(value)))
+
+            if column == cards_per_row - 1 or idx == len(metrics) - 1:
+                pdf.set_y(y + PDF_CARD_HEIGHT + PDF_CARD_GAP)
+            else:
+                pdf.set_xy(x + card_width + PDF_CARD_GAP, y)
+
+        pdf.ln(2)
+        set_body_font()
 
     def _safe_int(value):
         if value is None:
@@ -312,19 +491,23 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
         except (ValueError, TypeError):
             return None
 
-    pdf.set_font("Helvetica", "B", 16)
-    _write_line("Relatorio Completo - Dashboard de Consultorios", height=10)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, _sanitize_pdf_text(f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), ln=1)
-    pdf.ln(4)
+    draw_cover_page()
+
+    pdf.add_page()
+    set_body_font()
+
+    def start_section(title: str, subtitle: Optional[str] = None):
+        if pdf.get_y() > PDF_MARGIN:
+            pdf.ln(PDF_SECTION_GAP)
+        sections_index.append((title, pdf.page_no()))
+        draw_section_header(title, subtitle)
 
     if summary_metrics:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize_pdf_text("Resumo dos principais indicadores"), ln=1)
-        pdf.set_font("Helvetica", "", 11)
-        for key, value in summary_metrics.items():
-            _write_line(f"{key}: {value}")
-        pdf.ln(2)
+        start_section(
+            "Resumo Executivo",
+            "Indicadores principais para acompanhamento rápido do desempenho.",
+        )
+        draw_kpi_cards(summary_metrics)
 
     if ranking_df is not None and not ranking_df.empty:
         limits_cfg = ranking_limits or {}
@@ -402,14 +585,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
         def _write_ranking_section(title: str, dataset: pd.DataFrame, limit_used: int) -> None:
             if dataset.empty:
                 return
-            pdf.set_font("Helvetica", "B", 12)
-            pdf.cell(
-                0,
-                8,
-                _sanitize_pdf_text(f"{title} (limite configurado: {limit_used})"),
-                ln=1,
-            )
-            pdf.set_font("Helvetica", "", 11)
+            draw_subsection_header(f"{title} (top {limit_used})")
             for _, row in dataset.iterrows():
                 prof = row.get("Profissional", "")
                 especialidade = row.get("Especialidade", "")
@@ -424,7 +600,7 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                 total_txt = f"Total: {total}" if total is not None else ""
                 detalhes = []
                 if consultorio:
-                    detalhes.append(f"Consultorio: {consultorio}")
+                    detalhes.append(f"Consultório: {consultorio}")
                 if crm and str(crm).strip():
                     detalhes.append(f"CRM: {crm}")
                 if exames is not None:
@@ -441,12 +617,16 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                 if especialidade and especialidade != "Não informada":
                     titulo = f"{titulo} - {especialidade}"
 
-                _write_line(titulo)
+                write_body_line(titulo)
                 if detalhes:
-                    _write_line("; ".join(detalhes), height=5)
+                    write_body_line("; ".join(detalhes), height=5)
                 pdf.ln(1)
-            pdf.ln(2)
+            pdf.ln(PDF_SECTION_GAP / 2)
 
+        start_section(
+            "Rankings de Produtividade",
+            "Análise dos profissionais com maior volume de solicitações.",
+        )
         _write_ranking_section(
             "Top profissionais por produtividade",
             ranking_total_pdf,
@@ -478,15 +658,19 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
             med_pdf["Valor Aluguel"] = pd.to_numeric(
                 med_pdf["Valor Aluguel"], errors="coerce"
             )
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize_pdf_text("Planos, aluguel e profissionais"), ln=1)
-        pdf.set_font("Helvetica", "", 11)
+
+        start_section(
+            "Planos, Aluguel e Profissionais",
+            "Composição de planos, profissionais ativos e valores praticados.",
+        )
+
         total_profissionais = (
             med_pdf["Médico"].nunique() if "Médico" in med_pdf.columns else len(med_pdf)
         )
-        _write_line(f"Profissionais analisados: {total_profissionais}")
+        write_body_line(f"Profissionais analisados: {total_profissionais}")
 
         if "Planos" in med_pdf.columns:
+            draw_subsection_header("Distribuição por planos")
             planos = med_pdf.copy()
             planos["Planos"] = planos["Planos"].fillna("Nao informado").astype(str).str.strip()
             if "Médico" in planos.columns:
@@ -495,13 +679,13 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                 planos_grouped = planos["Planos"].value_counts().reset_index()
                 planos_grouped.columns = ["Planos", "Profissionais"]
             planos_grouped = planos_grouped.sort_values("Profissionais", ascending=False)
-            _write_line("Distribuicao por PLANOS:")
             for _, row in planos_grouped.head(5).iterrows():
                 plano_nome = row.get("Planos", "Nao informado")
                 qtd = _safe_int(row.get("Profissionais", 0)) or 0
-                _write_line(f"- {plano_nome}: {qtd} profissionais", height=5)
+                write_body_line(f"- {plano_nome}: {qtd} profissionais", height=5)
 
         if "Consultório" in med_pdf.columns:
+            draw_subsection_header("Totais por consultório")
             consult = med_pdf.copy()
             consult["Consultório"] = consult["Consultório"].fillna("Nao informado").astype(str).str.strip()
             consult_totais = consult.groupby("Consultório")
@@ -518,7 +702,6 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                 consult_resumo = consult_resumo.sort_values(
                     "Profissionais", ascending=False, na_position="last"
                 )
-            _write_line("Totais por consultório:")
             for _, row in consult_resumo.head(5).iterrows():
                 texto = f"- {row.get('Consultório', 'Nao informado')}: {int(row.get('Profissionais', 0))} profissionais"
                 if (
@@ -526,9 +709,10 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                     and pd.notna(row.get("Valor total aluguel"))
                 ):
                     texto += f" | Valor total: {format_currency(row['Valor total aluguel'])}"
-                _write_line(texto, height=5)
+                write_body_line(texto, height=5)
 
             if "Planos" in consult.columns and "Médico" in consult.columns:
+                draw_subsection_header("Convênios ativos por consultório")
                 consult_planos_pdf = consult.copy()
                 consult_planos_pdf["Planos"] = (
                     consult_planos_pdf["Planos"].fillna("Nao informado").astype(str).str.strip()
@@ -544,7 +728,6 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                         ["Consultório", "Profissionais", "Planos"],
                         ascending=[True, False, True],
                     )
-                    _write_line("Convênios ativos por consultório:")
                     for consultorio_nome, grupo in consult_planos_pdf.groupby("Consultório"):
                         grupo_top = grupo.head(5)
                         convenios_txt = []
@@ -554,25 +737,25 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
                             sufixo = "profissional" if qtd == 1 else "profissionais"
                             convenios_txt.append(f"{plano_nome}: {qtd} {sufixo}")
                         resumo_conv = "; ".join(convenios_txt) if convenios_txt else "Nenhum convênio informado"
-                        _write_line(f"- {consultorio_nome}: {resumo_conv}", height=5)
+                        write_body_line(f"- {consultorio_nome}: {resumo_conv}", height=5)
 
         if "Valor Aluguel" in med_pdf.columns:
             valores = med_pdf["Valor Aluguel"].dropna()
             if not valores.empty:
+                draw_subsection_header("Valores de aluguel")
                 media = valores.mean()
                 minimo = valores.min()
                 maximo = valores.max()
-                _write_line("Valores de aluguel (considerando dados disponiveis):")
-                _write_line(f"- Media: {format_currency(media)}", height=5)
-                _write_line(f"- Minimo: {format_currency(minimo)}", height=5)
-                _write_line(f"- Maximo: {format_currency(maximo)}", height=5)
-        pdf.ln(2)
+                write_body_line(f"- Média: {format_currency(media)}", height=5)
+                write_body_line(f"- Mínimo: {format_currency(minimo)}", height=5)
+                write_body_line(f"- Máximo: {format_currency(maximo)}", height=5)
 
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, _sanitize_pdf_text("Agenda filtrada"), ln=1)
-    pdf.set_font("Helvetica", "", 11)
+    start_section(
+        "Agenda Filtrada",
+        "Recorte dos agendamentos conforme filtros aplicados no dashboard.",
+    )
     if agenda_df is None or agenda_df.empty:
-        _write_line("Nenhum agendamento encontrado para os filtros atuais.")
+        write_body_line("Nenhum agendamento encontrado para os filtros atuais.")
     else:
         agenda_cols = [c for c in ["Sala", "Dia", "Turno", "Médico"] if c in agenda_df.columns]
         agenda_view = agenda_df.copy()
@@ -581,10 +764,25 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
         sort_cols = [c for c in ["Sala", "Dia", "Turno"] if c in agenda_view.columns]
         if sort_cols:
             agenda_view = agenda_view.sort_values(sort_cols)
-        _write_line("Primeiros 30 registros:")
+        write_body_line("Primeiros 30 registros:")
         for _, row in agenda_view.head(30).iterrows():
             linha = " | ".join(str(row.get(col, "")) for col in agenda_cols)
-            _write_line(linha, height=5)
+            write_body_line(linha, height=5)
+
+    if sections_index:
+        pdf.add_page()
+        draw_section_header("Sumário", "Referência rápida das seções geradas.")
+        family, style, size = PDF_BODY_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_TEXT_COLOR)
+        for title, page_number in sections_index:
+            pdf.set_x(pdf.l_margin)
+            pdf.cell(
+                effective_width - 20,
+                6,
+                _sanitize_pdf_text(title),
+            )
+            pdf.cell(20, 6, str(page_number), align="R", ln=1)
 
     output = pdf.output(dest="S")
     if isinstance(output, str):
