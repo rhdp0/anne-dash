@@ -12,6 +12,13 @@ import streamlit as st
 import plotly.express as px
 from fpdf import FPDF
 
+from app.data import (
+    ConsultorioDataFacade,
+    first_nonempty,
+    format_consultorio_label,
+    normalize_column_name,
+)
+
 
 # --- PDF identity constants ---
 PDF_PRIMARY_COLOR = (27, 59, 95)
@@ -204,55 +211,42 @@ DEFAULT_PATH = Path("/mnt/data/ESCALA DOS CONSULTORIOS DEFINITIVO.xlsx")
 st.sidebar.header("📂 Fonte de Dados")
 uploaded = st.sidebar.file_uploader("Envie o Excel (.xlsx)", type=["xlsx"], key="main_xlsx")
 
-def load_excel(file_like):
-    try:
-        return pd.ExcelFile(file_like)
-    except Exception as e:
-        st.error(f"Não foi possível abrir o arquivo: {e}")
-        return None
+data_facade = ConsultorioDataFacade()
 
 excel = None
 if uploaded is not None:
-    excel = load_excel(uploaded)
-    fonte = "Upload do usuário"
+    try:
+        excel = data_facade.load_workbook(uploaded)
+        fonte = "Upload do usuário"
+    except ValueError as exc:
+        st.error(str(exc))
 elif DEFAULT_PATH.exists():
-    excel = load_excel(DEFAULT_PATH)
-    fonte = f"Arquivo padrão: {DEFAULT_PATH.name}"
+    try:
+        excel = data_facade.load_workbook(DEFAULT_PATH)
+        fonte = f"Arquivo padrão: {DEFAULT_PATH.name}"
+    except ValueError as exc:
+        st.error(str(exc))
 else:
     st.error("Nenhum arquivo encontrado. Envie um Excel com as abas de CONSULTÓRIO.")
+    st.stop()
+
+if excel is None:
     st.stop()
 
 st.sidebar.success(f"Usando dados de: {fonte}")
 # A navegação por seções será configurada após os filtros.
 
+# ---------- Carregamento de dados ----------
+datasets = data_facade.load_dataset(excel)
+df = datasets.get("agenda", pd.DataFrame())
+produtividade_df = datasets.get("produtividade", pd.DataFrame())
+med_df = datasets.get("medicos", pd.DataFrame())
+
+if df.empty:
+    st.error("Não foram encontrados dados nas abas 'CONSULTÓRIO'.")
+    st.stop()
+
 # ---------- Utilitários ----------
-def _normalize_col(col):
-    c = str(col).strip().lower()
-    c = (c
-         .replace("á","a").replace("ã","a").replace("â","a")
-         .replace("é","e").replace("ê","e")
-         .replace("í","i").replace("î","i")
-         .replace("ó","o").replace("õ","o").replace("ô","o")
-         .replace("ú","u").replace("ü","u")
-         .replace("ç","c"))
-    c = re.sub(r"\s+", " ", c)
-    return c
-
-def _to_number(x):
-    import numpy as np, re as _re
-    if pd.isna(x):
-        return np.nan
-    txt = str(x)
-    txt = _re.sub(r"[^\d,.-]", "", txt)
-    if "," in txt and "." in txt:
-        txt = txt.replace(".", "").replace(",", ".")
-    elif "," in txt and "." not in txt:
-        txt = txt.replace(",", ".")
-    try:
-        return float(txt)
-    except:
-        return pd.NA
-
 def format_currency_value(value) -> str:
     if value is None:
         return "—"
@@ -267,23 +261,6 @@ def format_currency_value(value) -> str:
         return "—"
     formatted = f"R$ {numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return formatted
-
-def _first_nonempty(series):
-    for val in series:
-        if pd.isna(val):
-            continue
-        text = str(val).strip()
-        if text:
-            return text
-    return ""
-
-def _format_consultorio_label(name):
-    label = str(name).strip()
-    label = re.sub(r"(?i)^produtividade\s*[:\-]*", "", label).strip()
-    label = re.sub(r"(?i)consult[óo]rio", "Consultório", label)
-    label = re.sub(r"\s+", " ", label).strip(" -_:")
-    return label or str(name).strip()
-
 
 def _sanitize_pdf_text(text: str) -> str:
     """Remove acentuação incompatível e caracteres fora do conjunto latin-1."""
@@ -794,214 +771,6 @@ def build_pdf_report(summary_metrics, ranking_df, med_df, agenda_df, ranking_lim
     buffer.seek(0)
     return buffer.getvalue()
 
-def detect_header_and_parse(excel, sheet_name):
-    for header in [0,1,2,3,4]:
-        try:
-            df = excel.parse(sheet_name, header=header)
-        except Exception:
-            continue
-        df = df.dropna(how="all").dropna(axis=1, how="all")
-        if df.empty:
-            continue
-
-        cols_norm = [_normalize_col(c) for c in df.columns]
-        col_dia = None; col_manha=None; col_tarde=None
-
-        for i, cn in enumerate(cols_norm):
-            if col_dia is None:
-                if "dia" in cn or any(d in cn for d in ["segunda","terca","terça","quarta","quinta","sexta","sabado","sábado"]):
-                    col_dia = df.columns[i]
-            if any(k in cn for k in ["manha","manhã"]): col_manha = df.columns[i]
-            if "tarde" in cn: col_tarde = df.columns[i]
-
-        # fallback: primeira coluna contém dias
-        if col_dia is None and len(df.columns) >= 1:
-            first_col = df.columns[0]
-            sample = df[first_col].astype(str).str.lower()
-            if sample.str.contains("segunda|terca|terça|quarta|quinta|sexta|sabado|sábado").any():
-                col_dia = first_col
-
-        if col_dia is not None and (col_manha is not None or col_tarde is not None):
-            use_cols = [c for c in [col_dia, col_manha, col_tarde] if c is not None]
-            df = df[use_cols].copy()
-            rename = {col_dia:"Dia"}
-            if col_manha is not None: rename[col_manha]="Manhã"
-            if col_tarde is not None: rename[col_tarde]="Tarde"
-            df = df.rename(columns=rename)
-            df["Dia"] = df["Dia"].astype(str).str.strip()
-            df = df[df["Dia"].str.len()>0]
-            return df
-    return None
-
-def tidy_from_sheets(excel):
-    frames = []
-    for sheet in excel.sheet_names:
-        s_norm = _normalize_col(sheet)
-        if ("consult" in s_norm) and ("ocupa" not in s_norm):
-            df = detect_header_and_parse(excel, sheet)
-            if df is None or df.empty:
-                continue
-            df["Dia"] = (df["Dia"].astype(str).str.strip()
-                         .str.replace("terca","terça", case=False)
-                         .str.replace("sabado","sábado", case=False)
-                         .str.capitalize())
-            df.insert(0, "Sala", sheet.strip())
-            long = df.melt(id_vars=["Sala","Dia"], value_vars=[c for c in ["Manhã","Tarde"] if c in df.columns],
-                           var_name="Turno", value_name="Médico")
-            long["Médico"] = long["Médico"].astype(str).replace({"nan":"","None":""}).str.strip()
-            frames.append(long)
-    if not frames:
-        return pd.DataFrame(columns=["Sala","Dia","Turno","Médico"])
-    full = pd.concat(frames, ignore_index=True)
-    full["Dia"] = pd.Categorical(full["Dia"], categories=["Segunda","Terça","Quarta","Quinta","Sexta","Sábado"], ordered=True)
-    full["Ocupado"] = full["Médico"].str.len() > 0
-    return full
-
-def load_produtividade_from_excel(excel: pd.ExcelFile) -> pd.DataFrame:
-    frames = []
-    for sheet in excel.sheet_names:
-        s_norm = _normalize_col(sheet)
-        if "consultorios" in s_norm:
-            continue
-        is_prod_sheet = "produtiv" in s_norm and "consult" in s_norm
-        is_contas_sheet = "conta" in s_norm and "medic" in s_norm
-        if not (is_prod_sheet or is_contas_sheet):
-            continue
-        for header in range(0, 6):
-            try:
-                dfp = excel.parse(sheet, header=header)
-            except Exception:
-                continue
-            dfp = dfp.dropna(how="all").dropna(axis=1, how="all")
-            if dfp.empty:
-                continue
-
-            rename = {}
-            for col in dfp.columns:
-                norm = _normalize_col(col)
-                if "nome" in norm and "consult" not in norm:
-                    rename[col] = "Profissional"
-                elif norm == "crm" or "crm" in norm:
-                    rename[col] = "CRM"
-                elif "especial" in norm:
-                    rename[col] = "Especialidade"
-                elif "exame" in norm:
-                    rename[col] = "Exames Solicitados"
-                elif "cirurg" in norm:
-                    rename[col] = "Cirurgias Solicitadas"
-                elif (
-                    "receita" in norm
-                    or ("valor" in norm and "aluguel" not in norm and "total" in norm)
-                    or "fatur" in norm
-                ):
-                    rename[col] = "Receita"
-                elif "consult" in norm and "produtiv" not in norm:
-                    rename[col] = "Consultório"
-
-            dfp = dfp.rename(columns=rename)
-
-            if "Profissional" not in dfp.columns:
-                continue
-            if "Exames Solicitados" not in dfp.columns and "Cirurgias Solicitadas" not in dfp.columns:
-                continue
-
-            keep = [
-                c
-                for c in [
-                    "Profissional",
-                    "CRM",
-                    "Especialidade",
-                    "Exames Solicitados",
-                    "Cirurgias Solicitadas",
-                    "Receita",
-                    "Consultório",
-                ]
-                if c in dfp.columns
-            ]
-            dfp = dfp[keep].copy()
-
-            dfp["Profissional"] = dfp["Profissional"].astype(str).str.strip()
-            dfp = dfp[dfp["Profissional"].str.len() > 0]
-            dfp = dfp[dfp["Profissional"].apply(lambda x: _normalize_col(x) not in {"total", "totais", "subtotal"})]
-
-            if "Consultório" not in dfp.columns:
-                dfp["Consultório"] = _format_consultorio_label(sheet)
-            else:
-                dfp["Consultório"] = (
-                    dfp["Consultório"].astype(str).str.strip().replace(
-                        r"(?i)^(nan|none|null|na|n/a|sem\s*informac[aã]o|sem\s*dados?)$",
-                        "",
-                        regex=True,
-                    )
-                )
-                dfp.loc[dfp["Consultório"].eq(""), "Consultório"] = _format_consultorio_label(sheet)
-                dfp["Consultório"] = dfp["Consultório"].fillna(_format_consultorio_label(sheet))
-
-            if "Especialidade" in dfp.columns:
-                dfp["Especialidade"] = dfp["Especialidade"].astype(str).str.strip()
-            else:
-                dfp["Especialidade"] = ""
-
-            if "CRM" in dfp.columns:
-                dfp["CRM"] = dfp["CRM"].astype(str).str.strip()
-            else:
-                dfp["CRM"] = ""
-
-            for col in ["Exames Solicitados", "Cirurgias Solicitadas"]:
-                if col in dfp.columns:
-                    dfp[col] = dfp[col].apply(
-                        lambda value: 0
-                        if (pd.isna(value) or str(value).strip() == "")
-                        else _to_number(value)
-                    )
-                else:
-                    dfp[col] = 0
-                dfp[col] = pd.to_numeric(dfp[col], errors="coerce").fillna(0)
-
-            if "Receita" in dfp.columns:
-                dfp["Receita"] = dfp["Receita"].apply(
-                    lambda value: 0
-                    if (pd.isna(value) or str(value).strip() == "")
-                    else _to_number(value)
-                )
-                dfp["Receita"] = pd.to_numeric(dfp["Receita"], errors="coerce").fillna(0.0)
-            else:
-                dfp["Receita"] = 0.0
-
-            dfp["Consultório"] = dfp["Consultório"].apply(_format_consultorio_label)
-            dfp["_SalaNorm"] = dfp["Consultório"].apply(_normalize_col)
-
-            frames.append(dfp)
-            break
-    if not frames:
-        return pd.DataFrame(
-            columns=[
-                "Profissional",
-                "CRM",
-                "Especialidade",
-                "Exames Solicitados",
-                "Cirurgias Solicitadas",
-                "Receita",
-                "Consultório",
-                "_SalaNorm",
-            ]
-        )
-    produtividade_df = pd.concat(frames, ignore_index=True)
-
-    if "Receita" not in produtividade_df.columns:
-        produtividade_df["Receita"] = 0.0
-
-    produtividade_df["Receita"] = pd.to_numeric(
-        produtividade_df["Receita"], errors="coerce"
-    ).fillna(0.0)
-
-    return produtividade_df
-
-df = tidy_from_sheets(excel)
-if df.empty:
-    st.error("Não foram encontrados dados nas abas 'CONSULTÓRIO'.")
-    st.stop()
-
 # ---------- Filtros ----------
 st.sidebar.header("🔎 Filtros")
 salas = sorted(df["Sala"].dropna().unique().tolist())
@@ -1013,6 +782,12 @@ sel_salas = st.sidebar.multiselect("Consultório(s)", salas, default=salas)
 sel_dias = st.sidebar.multiselect("Dia(s)", dias, default=dias)
 sel_turnos = st.sidebar.multiselect("Turno(s)", turnos, default=turnos)
 sel_medicos = st.sidebar.multiselect("Médico(s)", medicos, default=[], help="Deixe vazio para não filtrar por médico.")
+
+filtered_df = data_facade.filter_by_date(
+    df,
+    allowed_values=sel_dias,
+    date_column="Dia",
+)
 
 # Configuração das seções disponíveis no dashboard
 section_labels = (
@@ -1030,17 +805,19 @@ selected_section = st.sidebar.radio(
 )
 
 # Base para KPIs (NÃO filtra por médico)
-mask_base = (df["Sala"].isin(sel_salas) & df["Dia"].astype(str).isin(sel_dias) & df["Turno"].isin(sel_turnos))
-fdf_base = df[mask_base].copy()
+mask_base = (
+    filtered_df["Sala"].isin(sel_salas)
+    & filtered_df["Turno"].isin(sel_turnos)
+)
+fdf_base = filtered_df[mask_base].copy()
 
 # Aplicar filtro de médico apenas onde fizer sentido
 if sel_medicos:
-    mask_medico = df["Médico"].isin(sel_medicos)
+    mask_medico = filtered_df["Médico"].isin(sel_medicos)
 else:
-    mask_medico = pd.Series(True, index=df.index)
-fdf = df[mask_base & mask_medico].copy()
+    mask_medico = pd.Series(True, index=filtered_df.index)
+fdf = filtered_df[mask_base & mask_medico].copy()
 
-produtividade_df = load_produtividade_from_excel(excel)
 ranking_prod_total = pd.DataFrame()
 receita_por_medico = pd.DataFrame()
 receita_por_consultorio = pd.DataFrame()
@@ -1054,13 +831,14 @@ if not produtividade_df.empty:
         "Cirurgias Solicitadas": "sum",
     }
     if "CRM" in base_prod.columns:
-        agg_map["CRM"] = _first_nonempty
+        agg_map["CRM"] = first_nonempty
     if "Receita" in base_prod.columns:
         agg_map["Receita"] = "sum"
 
-    ranking_prod_total = (
-        base_prod.groupby(["Consultório", "Especialidade", "Profissional"], as_index=False)
-        .agg(agg_map)
+    ranking_prod_total = data_facade.group_metrics(
+        base_prod,
+        ["Consultório", "Especialidade", "Profissional"],
+        agg_map,
     )
 
     if "CRM" not in ranking_prod_total.columns:
@@ -1090,7 +868,7 @@ if not produtividade_df.empty:
 
     ranking_prod_total["Receita"] = ranking_prod_total["Receita"].astype(float)
 
-    ranking_prod_total["SalaNorm"] = ranking_prod_total["Consultório"].apply(_normalize_col)
+    ranking_prod_total["SalaNorm"] = ranking_prod_total["Consultório"].apply(normalize_column_name)
     ranking_prod_total["Etiqueta"] = ranking_prod_total.apply(
         lambda r: (
             f"{r['Profissional']} - {r['Especialidade']} ({r['Consultório']})"
@@ -1554,7 +1332,7 @@ if selected_section == "🔍 Consultórios":
                 top_exames_ind = pd.DataFrame(columns=empty_ind_cols)
                 top_cirurgias_ind = pd.DataFrame(columns=empty_ind_cols)
                 top_receita_ind = pd.DataFrame(columns=empty_ind_cols)
-                sala_norm = _normalize_col(sala_detalhe)
+                sala_norm = normalize_column_name(sala_detalhe)
                 if ranking_prod_total.empty:
                     st.info("Sem dados de produtividade carregados para detalhar este consultório.")
                 else:
@@ -1851,115 +1629,6 @@ if selected_section == "🔍 Consultórios":
                     )
 
 # ---------- Integração das abas MÉDICOS (1, 2, 3...) ----------
-def load_medicos_from_excel(excel: pd.ExcelFile):
-    frames = []
-    for s in excel.sheet_names:
-        sn = _normalize_col(s)
-        if "medic" in sn:  # captura "médicos", "medicos"
-            try:
-                dfm = excel.parse(s, header=0)
-            except Exception:
-                continue
-            if dfm is None or dfm.empty:
-                continue
-            # normaliza colunas
-            norm = {c:_normalize_col(c) for c in dfm.columns}
-            dfm.columns = [norm[c] for c in dfm.columns]
-            rename = {}
-            consultorio_candidates = []
-            def _is_consultorio_candidate(col_name: str) -> bool:
-                col_norm = _normalize_col(col_name)
-                if not col_norm:
-                    return False
-                if any(kw in col_norm for kw in ["exclus", "divid", "plan", "valor", "crm", "turno"]):
-                    return False
-                return any(kw in col_norm for kw in ["consult", "sala", "unid"])
-            for c in dfm.columns:
-                if "nome" in c or "medico" in c: rename[c]="Médico"
-                if c=="crm" or "crm" in c: rename[c]="CRM"
-                if "especial" in c: rename[c]="Especialidade"
-                if "planos" in c or c=="plano": rename[c]="Planos"
-                if "valor" in c or "aluguel" in c or "negoci" in c: rename[c]="Valor Aluguel"
-                if "exclus" in c: rename[c]="Sala Exclusiva"
-                if "divid" in c: rename[c]="Sala Dividida"
-                if _is_consultorio_candidate(c):
-                    consultorio_candidates.append(c)
-                    if "consult" in c:
-                        rename[c] = "Consultório"
-            dfm = dfm.rename(columns=rename)
-            if "Consultório" not in dfm.columns and consultorio_candidates:
-                candidate = None
-                for cand in consultorio_candidates:
-                    if cand in dfm.columns:
-                        candidate = cand
-                        break
-                if candidate is not None:
-                    dfm = dfm.rename(columns={candidate: "Consultório"})
-            if "Consultório" not in dfm.columns:
-                dfm["Consultório"] = _format_consultorio_label(s)
-            keep = [
-                c
-                for c in [
-                    "Médico",
-                    "CRM",
-                    "Especialidade",
-                    "Planos",
-                    "Sala Exclusiva",
-                    "Sala Dividida",
-                    "Consultório",
-                    "Valor Aluguel",
-                ]
-                if c in dfm.columns
-            ]
-            if not keep:
-                continue
-            dfm = dfm[keep].copy()
-            frames.append(dfm)
-    if not frames:
-        return pd.DataFrame()
-    out = pd.concat(frames, ignore_index=True)
-    # normalizações finais
-    if "Médico" in out.columns: out["Médico"] = out["Médico"].astype(str).str.strip()
-    if "Planos" in out.columns: out["Planos"] = out["Planos"].astype(str).str.strip()
-    if "Consultório" in out.columns:
-        def _clean_consultorio(value):
-            if pd.isna(value):
-                return pd.NA
-            text = str(value).strip()
-            if not text:
-                return pd.NA
-            if _normalize_col(text) in {"nan", "none", "null", "sem informacao", "sem dado", "sem dados", "sem sala"}:
-                return pd.NA
-            formatted = _format_consultorio_label(text)
-            formatted = formatted.strip()
-            return formatted if formatted else pd.NA
-
-        out["Consultório"] = out["Consultório"].apply(_clean_consultorio)
-    if "Valor Aluguel" in out.columns: out["Valor Aluguel"] = out["Valor Aluguel"].apply(_to_number)
-    for c in ["Sala Exclusiva", "Sala Dividida"]:
-        if c in out.columns:
-            col = out[c].astype(str).str.strip()
-            col = col.replace(
-                {"nan": "", "NaN": "", "None": "", "none": "", "": ""}
-            )
-            col_lower = col.str.lower()
-            mapped = col_lower.map(
-                {
-                    "sim": "Sim",
-                    "x": "Sim",
-                    "1": "Sim",
-                    "true": "Sim",
-                    "não": "Não",
-                    "nao": "Não",
-                    "n": "Não",
-                    "0": "Não",
-                    "false": "Não",
-                }
-            )
-            out[c] = mapped.fillna(col)
-    return out
-
-med_df = load_medicos_from_excel(excel)
 
 med_enriched = pd.DataFrame()
 consultorio_medico_agg = pd.DataFrame()
@@ -1977,7 +1646,7 @@ else:
     if "Consultório" in med_enriched.columns and "Médico" in med_enriched.columns:
         med_consult = med_enriched.copy()
         med_consult["Consultório"] = med_consult["Consultório"].apply(
-            lambda v: v if pd.isna(v) else _format_consultorio_label(v)
+            lambda v: v if pd.isna(v) else format_consultorio_label(v)
         )
         med_consult = med_consult.dropna(subset=["Consultório"])
         med_consult = med_consult[med_consult["Consultório"].astype(str).str.strip() != ""]
