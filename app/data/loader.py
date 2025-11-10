@@ -244,15 +244,18 @@ def load_produtividade_from_workbook(excel: pd.ExcelFile) -> pd.DataFrame:
             ]
         )
     produtividade_df = pd.concat(frames, ignore_index=True)
-    produtividade_df["Receita"] = pd.to_numeric(
-        produtividade_df.get("Receita", 0), errors="coerce"
-    ).fillna(0.0)
-    produtividade_df["Exames Solicitados"] = pd.to_numeric(
-        produtividade_df.get("Exames Solicitados", 0), errors="coerce"
-    ).fillna(0)
-    produtividade_df["Cirurgias Solicitadas"] = pd.to_numeric(
-        produtividade_df.get("Cirurgias Solicitadas", 0), errors="coerce"
-    ).fillna(0)
+    numeric_defaults = {
+        "Receita": 0.0,
+        "Exames Solicitados": 0,
+        "Cirurgias Solicitadas": 0,
+    }
+    for column, default in numeric_defaults.items():
+        if column in produtividade_df.columns:
+            produtividade_df[column] = (
+                pd.to_numeric(produtividade_df[column], errors="coerce").fillna(default)
+            )
+        else:
+            produtividade_df[column] = default
     return produtividade_df
 
 
