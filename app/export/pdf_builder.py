@@ -781,12 +781,12 @@ class DashboardPDFBuilder:
                 agenda_view[col] = "—"
 
         agenda_view = agenda_view[agenda_expected]
-        agenda_view = agenda_view.fillna("—")
 
         for col in agenda_view.columns:
             series = agenda_view[col]
             if pd.api.types.is_categorical_dtype(series):
-                agenda_view[col] = series.cat.add_categories(["—"])
+                if "—" not in series.cat.categories:
+                    agenda_view[col] = series.cat.add_categories(["—"])
 
         agenda_view = agenda_view.fillna("—")
 
