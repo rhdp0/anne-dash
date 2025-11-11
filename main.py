@@ -14,6 +14,7 @@ from app.data import (
     normalize_column_name,
 )
 from app.export.pdf_builder import DashboardPDFBuilder
+from app.services import OccupancyAnalyzer
 
 
 st.set_page_config(page_title="Dashboard Consultórios", layout="wide")
@@ -333,31 +334,21 @@ if not produtividade_df.empty:
         .sort_values("Receita Total", ascending=False)
     )
 
-# ---------- KPIs ----------
-total_salas = len(set(sel_salas))
-total_slots = len(fdf_base)
-ocupados = int(fdf_base["Ocupado"].sum())
-tx_ocup = (ocupados / total_slots * 100) if total_slots > 0 else 0
-slots_livres = max(total_slots - ocupados, 0)
-medicos_distintos = fdf_base.loc[fdf_base["Ocupado"], "Médico"].nunique()
-
-summary_metrics = {
-    "Consultórios selecionados": total_salas,
-    "Slots analisados": total_slots,
-    "Slots livres": slots_livres,
-    "Slots ocupados": ocupados,
-    "Taxa de ocupação": f"{tx_ocup:.1f}%",
-    "Médicos distintos": medicos_distintos,
-    "Dias filtrados": ", ".join(sel_dias) if sel_dias else "Todos",
-    "Turnos filtrados": ", ".join(sel_turnos) if sel_turnos else "Todos",
-}
-if sel_medicos:
-    summary_metrics["Médicos no filtro"] = len(sel_medicos)
-
-if not ranking_prod_total.empty:
-    total_receita_geral = ranking_prod_total["Receita"].sum()
-    if total_receita_geral > 0:
-        summary_metrics["Receita total (produtividade)"] = format_currency_value(total_receita_geral)
+occupancy_service = OccupancyAnalyzer(
+    base_df=fdf_base,
+    filtered_df=fdf,
+    selected_salas=sel_salas,
+    selected_dias=sel_dias,
+    selected_turnos=sel_turnos,
+    selected_medicos=sel_medicos,
+    ranking_df=ranking_prod_total,
+)
+kpis = occupancy_service.get_kpi_summary()
+summary_metrics = occupancy_service.build_summary_metadata()
+if "Receita total (produtividade)" in summary_metrics:
+    summary_metrics["Receita total (produtividade)"] = format_currency_value(
+        summary_metrics["Receita total (produtividade)"]
+    )
 
 if selected_section == "📊 Visão Geral":
     with section_block(
@@ -366,18 +357,17 @@ if selected_section == "📊 Visão Geral":
         anchor="visao-geral",
     ) as sec:
         c1, c2, c3, c4 = sec.columns(4)
-        c1.metric("Consultórios selecionados", total_salas)
-        c2.metric("Slots (dia × turno × sala)", total_slots)
-        c3.metric("Slots livres", slots_livres)
-        c4.metric("Ocupados", ocupados)
+        c1.metric("Consultórios selecionados", kpis.total_salas)
+        c2.metric("Slots (dia × turno × sala)", kpis.total_slots)
+        c3.metric("Slots livres", kpis.slots_livres)
+        c4.metric("Ocupados", kpis.slots_ocupados)
 
         kc1, kc2 = sec.columns(2)
-        kc1.metric("Taxa de ocupação", f"{tx_ocup:.1f}%")
-        kc2.metric("Médicos distintos", medicos_distintos)
+        kc1.metric("Taxa de ocupação", f"{kpis.taxa_ocupacao:.1f}%")
+        kc2.metric("Médicos distintos", kpis.medicos_distintos)
 
         colA, colB = sec.columns(2)
-        by_sala = fdf_base.groupby("Sala")["Ocupado"].mean().reset_index()
-        by_sala["Taxa de Ocupação (%)"] = (by_sala["Ocupado"] * 100).round(1)
+        by_sala = occupancy_service.build_timeseries(["Sala"])
         fig1 = px.bar(
             by_sala,
             x="Sala",
@@ -389,8 +379,7 @@ if selected_section == "📊 Visão Geral":
         fig1.update_yaxes(range=[0, 100])
         colA.plotly_chart(fig1, use_container_width=True)
 
-        by_dia = fdf_base.groupby("Dia")["Ocupado"].mean().reset_index()
-        by_dia["Taxa de Ocupação (%)"] = (by_dia["Ocupado"] * 100).round(1)
+        by_dia = occupancy_service.build_timeseries(["Dia"])
         fig2 = px.bar(
             by_dia,
             x="Dia",
@@ -403,8 +392,7 @@ if selected_section == "📊 Visão Geral":
         colB.plotly_chart(fig2, use_container_width=True)
 
         colC, colD = sec.columns(2)
-        by_turno = fdf_base.groupby("Turno")["Ocupado"].mean().reset_index()
-        by_turno["Taxa de Ocupação (%)"] = (by_turno["Ocupado"] * 100).round(1)
+        by_turno = occupancy_service.build_timeseries(["Turno"])
         fig3 = px.bar(
             by_turno,
             x="Turno",
@@ -416,14 +404,7 @@ if selected_section == "📊 Visão Geral":
         fig3.update_yaxes(range=[0, 100])
         colC.plotly_chart(fig3, use_container_width=True)
 
-        top_med = (
-            fdf[fdf["Ocupado"]]
-            .groupby("Médico")
-            .size()
-            .reset_index(name="Turnos Utilizados")
-            .sort_values("Turnos Utilizados", ascending=False)
-            .head(15)
-        )
+        top_med = occupancy_service.top_medicos_por_turnos(15)
         if not top_med.empty:
             fig4 = px.bar(
                 top_med,
@@ -740,21 +721,23 @@ if selected_section == "🔍 Consultórios":
             if detalhe_base.empty:
                 st.info("Sem dados para o consultório selecionado com os filtros atuais de dia/turno.")
             else:
-                slots_totais = len(detalhe_base)
-                ocupados_ind = int(detalhe_base["Ocupado"].sum())
-                livres_ind = max(slots_totais - ocupados_ind, 0)
-                taxa_ind = (ocupados_ind / slots_totais * 100) if slots_totais > 0 else 0
-                medicos_ind = detalhe_base.loc[detalhe_base["Ocupado"], "Médico"].nunique()
+                kpis_consultorio = OccupancyAnalyzer.compute_basic_metrics(detalhe_base)
 
                 ic1, ic2, ic3, ic4 = st.columns(4)
                 ic1.metric("Consultório", sala_detalhe)
-                ic2.metric("Slots do consultório", slots_totais)
-                ic3.metric("Slots livres", livres_ind)
-                ic4.metric("Ocupados", ocupados_ind)
+                ic2.metric("Slots do consultório", kpis_consultorio.total_slots)
+                ic3.metric("Slots livres", kpis_consultorio.slots_livres)
+                ic4.metric("Ocupados", kpis_consultorio.slots_ocupados)
 
                 ic5, ic6 = st.columns(2)
-                ic5.metric("Taxa de ocupação do consultório", f"{taxa_ind:.1f}%")
-                ic6.metric("Médicos distintos no consultório", medicos_ind)
+                ic5.metric(
+                    "Taxa de ocupação do consultório",
+                    f"{kpis_consultorio.taxa_ocupacao:.1f}%",
+                )
+                ic6.metric(
+                    "Médicos distintos no consultório",
+                    kpis_consultorio.medicos_distintos,
+                )
 
                 ranking_ind_total = pd.DataFrame()
                 ranking_ind_exames = pd.DataFrame()
