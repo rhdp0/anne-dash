@@ -516,7 +516,7 @@ class DashboardPDFBuilder:
             planos["Planos"] = planos["Planos"].fillna("Nao informado").astype(str).str.strip()
             if "Médico" in planos.columns:
                 planos_grouped = (
-                    planos.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
+                    planos.groupby("Planos", observed=False)["Médico"].nunique().reset_index(name="Profissionais")
                 )
             else:
                 planos_grouped = planos["Planos"].value_counts().reset_index()
@@ -531,7 +531,7 @@ class DashboardPDFBuilder:
             self._draw_subsection_header("Totais por consultório")
             consult = med_pdf.copy()
             consult["Consultório"] = consult["Consultório"].fillna("Nao informado").astype(str).str.strip()
-            consult_totais = consult.groupby("Consultório")
+            consult_totais = consult.groupby("Consultório", observed=False)
             consult_resumo = consult_totais["Médico"].nunique().reset_index(name="Profissionais")
             if "Valor Aluguel" in consult.columns:
                 consult_resumo["Valor total aluguel"] = consult_totais["Valor Aluguel"].sum(
@@ -568,7 +568,7 @@ class DashboardPDFBuilder:
                     consult_planos_pdf["Planos"].fillna("Nao informado").astype(str).str.strip()
                 )
                 consult_planos_pdf = (
-                    consult_planos_pdf.groupby(["Consultório", "Planos"])["Médico"].nunique().reset_index(name="Profissionais")
+                    consult_planos_pdf.groupby(["Consultório", "Planos"], observed=False)["Médico"].nunique().reset_index(name="Profissionais")
                 )
                 consult_planos_pdf = consult_planos_pdf[
                     consult_planos_pdf["Profissionais"].gt(0)
@@ -578,7 +578,9 @@ class DashboardPDFBuilder:
                         ["Consultório", "Profissionais", "Planos"],
                         ascending=[True, False, True],
                     )
-                    for consultorio_nome, grupo in consult_planos_pdf.groupby("Consultório"):
+                    for consultorio_nome, grupo in consult_planos_pdf.groupby(
+                        "Consultório", observed=False
+                    ):
                         grupo_top = grupo.head(5)
                         convenios_txt: List[str] = []
                         for _, plano_row in grupo_top.iterrows():
