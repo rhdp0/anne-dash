@@ -1282,15 +1282,17 @@ if consultorio_alvo:
                         .reset_index()
                     )
 
-                    if "Slots Ocupados" in agenda_summary.columns:
-                        agenda_summary["Slots Ocupados"] = agenda_summary[
-                            "Slots Ocupados"
-                        ].astype(int)
-                    agenda_summary["Total Slots"] = agenda_summary["Total Slots"].astype(int)
-                    if "Médicos Ativos" in agenda_summary.columns:
-                        agenda_summary["Médicos Ativos"] = agenda_summary[
-                            "Médicos Ativos"
-                        ].astype(int)
+                    agg_columns = [
+                        column
+                        for column in agg_spec.keys()
+                        if column in agenda_summary.columns
+                    ]
+                    for column in agg_columns:
+                        agenda_summary[column] = (
+                            pd.to_numeric(agenda_summary[column], errors="coerce")
+                            .fillna(0)
+                            .astype("Int64")
+                        )
 
                     if "Dia" in agenda_summary.columns:
                         agenda_summary["Dia"] = agenda_summary["Dia"].apply(
