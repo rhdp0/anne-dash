@@ -49,6 +49,20 @@ section[data-testid="stSidebar"] {
 
 section[data-testid="stSidebar"] > div {
     padding: 1.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    gap: 1.25rem;
+}
+
+.sidebar-download-container {
+    margin-top: auto;
+    padding-top: 1.5rem;
+}
+
+.sidebar-download-container .stDownloadButton button {
+    width: 100%;
+    justify-content: flex-start;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -247,6 +261,8 @@ selected_section = st.sidebar.radio(
     index=0,
     key="selected_section",
 )
+
+sidebar_pdf_container = st.sidebar.container()
 
 # Base para KPIs (NÃO filtra por médico)
 mask_base = (
@@ -1129,6 +1145,38 @@ else:
                     na_position="last",
                 )
 
+ranking_para_pdf = ranking_prod_total.copy()
+if not ranking_para_pdf.empty:
+    if sel_salas:
+        ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
+    if sel_medicos:
+        ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
+
+pdf_builder = DashboardPDFBuilder(
+    data_source=fonte,
+    summary_metrics=summary_metrics,
+    ranking_df=ranking_para_pdf,
+    med_df=med_enriched if not med_df.empty else pd.DataFrame(),
+    agenda_df=fdf,
+    ranking_limits={
+        "total": st.session_state.get("ranking_produtividade_top", 10),
+        "exames": st.session_state.get("ranking_produtividade_top", 10),
+        "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
+        "receita": st.session_state.get("ranking_produtividade_top", 10),
+    },
+)
+pdf_bytes = pdf_builder.build()
+
+with sidebar_pdf_container:
+    st.markdown('<div class="sidebar-download-container">', unsafe_allow_html=True)
+    st.download_button(
+        "📄 Baixar relatório completo (PDF)",
+        data=pdf_bytes,
+        file_name="dashboard_consultorios.pdf",
+        mime="application/pdf",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
 if selected_section == "💼 Planos & Aluguel":
     if medicos_warning:
         st.warning(medicos_warning)
@@ -1412,35 +1460,7 @@ if selected_section == "📋 Agenda":
             use_container_width=True,
         )
 
-        ranking_para_pdf = ranking_prod_total.copy()
-        if not ranking_para_pdf.empty:
-            if sel_salas:
-                ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Consultório"].isin(sel_salas)]
-            if sel_medicos:
-                ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
-
-        pdf_builder = DashboardPDFBuilder(
-            data_source=fonte,
-            summary_metrics=summary_metrics,
-            ranking_df=ranking_para_pdf,
-            med_df=med_enriched if not med_df.empty else pd.DataFrame(),
-            agenda_df=fdf,
-            ranking_limits={
-                "total": st.session_state.get("ranking_produtividade_top", 10),
-                "exames": st.session_state.get("ranking_produtividade_top", 10),
-                "cirurgias": st.session_state.get("ranking_produtividade_top", 10),
-                "receita": st.session_state.get("ranking_produtividade_top", 10),
-            },
-        )
-        pdf_bytes = pdf_builder.build()
-
         csv = fdf.to_csv(index=False).encode("utf-8-sig")
-        sec.download_button(
-            "📄 Baixar relatório completo (PDF)",
-            data=pdf_bytes,
-            file_name="dashboard_consultorios.pdf",
-            mime="application/pdf",
-        )
         sec.download_button(
             "⬇️ Baixar dados filtrados (CSV)",
             data=csv,
