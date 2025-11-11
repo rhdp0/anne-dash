@@ -308,6 +308,128 @@ class DashboardPDFBuilder:
         pdf.ln(2)
         self._set_body_font()
 
+    def _draw_table(
+        self,
+        columns: List[Tuple[str, float]],
+        data: Iterable[Dict[str, object]] | pd.DataFrame,
+        *,
+        header_height: float = 7,
+        line_height: float = 6,
+    ) -> None:
+        if not columns:
+            return
+
+        pdf = self.pdf
+        if pdf is None:
+            return
+
+        if isinstance(data, pd.DataFrame):
+            records: List[Dict[str, object]] = data.to_dict(orient="records")
+        else:
+            records = list(data)
+
+        if not records:
+            return
+
+        total_spec = sum(width for _, width in columns) or float(len(columns))
+        effective_width = self.effective_width or (
+            pdf.w - pdf.l_margin - pdf.r_margin
+        )
+        scale = effective_width / total_spec
+        col_widths = [width * scale for _, width in columns]
+
+        width_sum = sum(col_widths)
+        if width_sum > effective_width:
+            shrink_factor = effective_width / width_sum
+            col_widths = [w * shrink_factor for w in col_widths]
+        elif width_sum < effective_width and col_widths:
+            col_widths[-1] += effective_width - width_sum
+
+        header_labels = [label for label, _ in columns]
+
+        def _draw_header() -> None:
+            if pdf.get_y() + header_height > pdf.page_break_trigger:
+                pdf.add_page()
+                self._set_body_font()
+
+            pdf.set_x(pdf.l_margin)
+            pdf.set_fill_color(*PDF_SOFT_BACKGROUND)
+            pdf.set_draw_color(*PDF_ACCENT_COLOR)
+            pdf.set_line_width(0.2)
+            family, _, size = PDF_BODY_FONT
+            pdf.set_font(family, "B", size)
+            pdf.set_text_color(*PDF_PRIMARY_COLOR)
+
+            for label, width in zip(header_labels, col_widths):
+                pdf.multi_cell(
+                    width,
+                    header_height,
+                    _sanitize_pdf_text(str(label)),
+                    border=1,
+                    align="L",
+                    fill=True,
+                    new_x="RIGHT",
+                    new_y="TOP",
+                    max_line_height=header_height,
+                )
+
+            pdf.ln(header_height)
+            self._set_body_font()
+            pdf.set_text_color(*PDF_TEXT_COLOR)
+
+        def _prepare_cell_text(value: object) -> str:
+            if value is None:
+                return "—"
+            try:
+                if isinstance(value, float) and pd.isna(value):
+                    return "—"
+            except TypeError:
+                pass
+            return _sanitize_pdf_text(str(value)) or "—"
+
+        _draw_header()
+
+        for record in records:
+            row_texts = [_prepare_cell_text(record.get(label)) for label in header_labels]
+
+            line_counts: List[int] = []
+            for text, width in zip(row_texts, col_widths):
+                lines = pdf.multi_cell(
+                    width,
+                    line_height,
+                    text,
+                    split_only=True,
+                )
+                line_counts.append(max(1, len(lines)))
+
+            row_height = max(line_counts) * line_height
+            if pdf.get_y() + row_height > pdf.page_break_trigger:
+                pdf.add_page()
+                self._set_body_font()
+                _draw_header()
+
+            start_y = pdf.get_y()
+            x = pdf.l_margin
+            for text, width in zip(row_texts, col_widths):
+                pdf.set_xy(x, start_y)
+                pdf.multi_cell(
+                    width,
+                    line_height,
+                    text,
+                    border=1,
+                    align="L",
+                    fill=False,
+                    new_x="RIGHT",
+                    new_y="TOP",
+                    max_line_height=line_height,
+                )
+                x += width
+
+            pdf.set_xy(pdf.l_margin, start_y + row_height)
+
+        pdf.ln(2)
+        self._set_body_font()
+
     def _safe_int(self, value):
         if value is None:
             return None
@@ -422,45 +544,59 @@ class DashboardPDFBuilder:
             else pd.DataFrame()
         )
 
-        def _write_ranking_section(title: str, dataset: pd.DataFrame, limit_used: int) -> None:
+        ranking_table_columns: List[Tuple[str, float]] = [
+            ("Rank", 1.0),
+            ("Profissional", 2.8),
+            ("Consultório", 2.0),
+            ("Especialidade", 2.2),
+            ("Totais", 3.0),
+            ("Receita", 1.8),
+        ]
+
+        def _build_ranking_table(dataset: pd.DataFrame) -> pd.DataFrame:
             if dataset.empty:
-                return
-            self._draw_subsection_header(f"{title} (top {limit_used})")
+                return pd.DataFrame(columns=[label for label, _ in ranking_table_columns])
+
+            registros: List[Dict[str, object]] = []
             for _, row in dataset.iterrows():
-                prof = row.get("Profissional", "")
-                especialidade = row.get("Especialidade", "")
-                consultorio = row.get("Consultório", "")
-                crm = row.get("CRM", "")
+                rank_val = self._safe_int(row.get("Rank"))
+                prof = row.get("Profissional") or "Não informado"
+                consultorio = row.get("Consultório") or "Não informado"
+                especialidade = row.get("Especialidade") or "Não informada"
                 total = self._safe_int(row.get("Total Procedimentos"))
                 exames = self._safe_int(row.get("Exames Solicitados"))
                 cirurgias = self._safe_int(row.get("Cirurgias Solicitadas"))
-                receita = row.get("Receita")
-                rank = row.get("Rank")
+                receita = row.get("Receita") if "Receita" in row else None
 
-                total_txt = f"Total: {total}" if total is not None else ""
-                detalhes: List[str] = []
-                if consultorio:
-                    detalhes.append(f"Consultório: {consultorio}")
-                if crm and str(crm).strip():
-                    detalhes.append(f"CRM: {crm}")
+                totais_partes: List[str] = []
+                if total is not None:
+                    totais_partes.append(f"Total: {total}")
                 if exames is not None:
-                    detalhes.append(f"Exames: {exames}")
+                    totais_partes.append(f"Exames: {exames}")
                 if cirurgias is not None:
-                    detalhes.append(f"Cirurgias: {cirurgias}")
-                if receita is not None and not pd.isna(receita):
-                    detalhes.append(f"Receita: {self._format_currency_value(receita)}")
-                if total_txt:
-                    detalhes.insert(0, total_txt)
+                    totais_partes.append(f"Cirurgias: {cirurgias}")
 
-                rank_txt = f"{rank}. " if rank is not None else ""
-                titulo = f"{rank_txt}{prof}" if prof else f"{rank_txt}Profissional"
-                if especialidade and especialidade != "Não informada":
-                    titulo = f"{titulo} - {especialidade}"
+                registros.append(
+                    {
+                        "Rank": str(rank_val) if rank_val is not None else "—",
+                        "Profissional": prof,
+                        "Consultório": consultorio,
+                        "Especialidade": especialidade,
+                        "Totais": " | ".join(totais_partes) if totais_partes else "—",
+                        "Receita": self._format_currency_value(receita),
+                    }
+                )
 
-                self._write_body_line(titulo)
-                if detalhes:
-                    self._write_body_line("; ".join(detalhes), height=5)
-                self.pdf.ln(1)
+            return pd.DataFrame(registros, columns=[label for label, _ in ranking_table_columns])
+
+        def _write_ranking_section(title: str, dataset: pd.DataFrame, limit_used: int) -> None:
+            if dataset.empty:
+                return
+            tabela = _build_ranking_table(dataset)
+            if tabela.empty:
+                return
+            self._draw_subsection_header(f"{title} (top {limit_used})")
+            self._draw_table(ranking_table_columns, tabela)
             self.pdf.ln(PDF_SECTION_GAP / 2)
 
         self._start_section(
@@ -620,17 +756,56 @@ class DashboardPDFBuilder:
             self._write_body_line("Nenhum agendamento encontrado para os filtros atuais.")
             return
 
-        agenda_cols = [c for c in ["Sala", "Dia", "Turno", "Médico"] if c in agenda_df.columns]
         agenda_view = agenda_df.copy()
-        if agenda_cols:
-            agenda_view = agenda_view[agenda_cols]
         sort_cols = [c for c in ["Sala", "Dia", "Turno"] if c in agenda_view.columns]
         if sort_cols:
             agenda_view = agenda_view.sort_values(sort_cols)
-        self._write_body_line("Primeiros 30 registros:")
-        for _, row in agenda_view.head(30).iterrows():
-            linha = " | ".join(str(row.get(col, "")) for col in agenda_cols)
-            self._write_body_line(linha, height=5)
+
+        total_registros = len(agenda_view)
+        summary_lines = [f"Total de agendamentos: {total_registros}"]
+        if "Sala" in agenda_view.columns:
+            salas_distintas = agenda_view["Sala"].dropna().nunique()
+            summary_lines.append(f"Salas distintas: {salas_distintas}")
+        if "Médico" in agenda_view.columns:
+            medicos_distintos = agenda_view["Médico"].dropna().nunique()
+            summary_lines.append(f"Profissionais distintos: {medicos_distintos}")
+
+        for resumo in summary_lines:
+            self._write_body_line(resumo, height=5)
+
+        self.pdf.ln(2)
+
+        agenda_expected = ["Sala", "Dia", "Turno", "Médico"]
+        for col in agenda_expected:
+            if col not in agenda_view.columns:
+                agenda_view[col] = "—"
+
+        agenda_view = agenda_view[agenda_expected]
+        agenda_view = agenda_view.fillna("—")
+
+        def _format_dia(value: object) -> object:
+            if isinstance(value, (datetime, pd.Timestamp)):
+                return value.strftime("%d/%m/%Y")
+            return value
+
+        if "Dia" in agenda_view.columns:
+            agenda_view["Dia"] = agenda_view["Dia"].apply(_format_dia)
+
+        agenda_table_columns: List[Tuple[str, float]] = [
+            ("Sala", 1.4),
+            ("Dia", 1.8),
+            ("Turno", 1.4),
+            ("Médico", 3.4),
+        ]
+
+        chunk_size = 30
+        for start in range(0, total_registros, chunk_size):
+            bloco = agenda_view.iloc[start : start + chunk_size]
+            if bloco.empty:
+                continue
+            titulo = "Agenda detalhada" if start == 0 else f"Agenda detalhada (registros {start + 1}-{start + len(bloco)})"
+            self._draw_subsection_header(titulo)
+            self._draw_table(agenda_table_columns, bloco)
 
     def _render_toc(self) -> None:
         if not self.sections_index:
