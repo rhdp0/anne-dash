@@ -377,15 +377,19 @@ class DashboardPDFBuilder:
             self._set_body_font()
             pdf.set_text_color(*PDF_TEXT_COLOR)
 
+        empty_placeholder = _sanitize_pdf_text("—") or "-"
+
         def _prepare_cell_text(value: object) -> str:
             if value is None:
-                return "—"
+                return empty_placeholder
             try:
                 if isinstance(value, float) and pd.isna(value):
-                    return "—"
+                    return empty_placeholder
             except TypeError:
                 pass
-            return _sanitize_pdf_text(str(value)) or "—"
+
+            sanitized_text = _sanitize_pdf_text(str(value))
+            return sanitized_text or empty_placeholder
 
         _draw_header()
 
