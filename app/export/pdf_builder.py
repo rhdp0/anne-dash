@@ -251,10 +251,17 @@ class DashboardPDFBuilder:
 
     def _write_body_line(self, text: str, height: float = 6) -> None:
         sanitized = _sanitize_pdf_text(text)
-        if sanitized:
-            self.pdf.multi_cell(0, height, sanitized)
-        else:
+        if not sanitized:
             self.pdf.ln(height)
+            return
+
+        self.pdf.set_x(self.pdf.l_margin)
+        width = self.effective_width or (self.pdf.w - self.pdf.l_margin - self.pdf.r_margin)
+        if width <= 0:
+            self.pdf.ln(height)
+            return
+
+        self.pdf.multi_cell(width, height, sanitized)
 
     def _draw_kpi_cards(self, metrics: Dict[str, object]) -> None:
         if not metrics:
