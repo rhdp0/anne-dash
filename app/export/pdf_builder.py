@@ -147,7 +147,12 @@ class DashboardPDFBuilder:
     def build(self) -> bytes:
         """Generate the PDF report and return the resulting bytes."""
 
-        self.pdf = DashboardPDF(data_source=_sanitize_pdf_text(str(self.data_source)))
+        self.pdf = DashboardPDF(
+            data_source=_sanitize_pdf_text(str(self.data_source)),
+            orientation="P",
+            unit="mm",
+            format="A4",
+        )
         self.pdf.set_margins(PDF_MARGIN, PDF_MARGIN, PDF_MARGIN)
         self.pdf.set_auto_page_break(auto=True, margin=PDF_MARGIN)
         self.pdf.alias_nb_pages()
