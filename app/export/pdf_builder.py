@@ -106,6 +106,7 @@ class DashboardPDFBuilder:
         overview_timeseries: Optional[Dict[str, pd.DataFrame]] = None,
         top_medicos_turnos: Optional[pd.DataFrame] = None,
         ranking_limits: Optional[Dict[str, int]] = None,
+        consultorios_data: Optional[Dict[str, Dict[str, object]]] = None,
     ) -> None:
         self.data_source = data_source or "Origem não informada"
         self.summary_metrics = summary_metrics or {}
@@ -123,6 +124,18 @@ class DashboardPDFBuilder:
             else pd.DataFrame()
         )
         self.ranking_limits = ranking_limits or {}
+        self.consultorios_data: Dict[str, Dict[str, object]] = {}
+        if consultorios_data:
+            for key, value in consultorios_data.items():
+                if not isinstance(value, dict):
+                    continue
+                entry: Dict[str, object] = {}
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, pd.DataFrame):
+                        entry[sub_key] = sub_value.copy()
+                    else:
+                        entry[sub_key] = sub_value
+                self.consultorios_data[str(key)] = entry
 
         self.pdf: Optional[DashboardPDF] = None
         self.effective_width: float = 0.0
@@ -150,6 +163,7 @@ class DashboardPDFBuilder:
         self._render_overview_section()
         self._render_summary_section()
         self._render_ranking_section()
+        self._render_consultorios_section()
         self._render_med_info_section()
         self._render_agenda_section()
         self._render_toc()
@@ -763,6 +777,126 @@ class DashboardPDFBuilder:
                 ranking_receita_pdf,
                 min(limit_receita, len(ranking_df)),
             )
+
+    def _render_consultorios_section(self) -> None:
+        consultorios = self.consultorios_data or {}
+        if not consultorios:
+            return
+
+        self._start_section(
+            "Consultórios selecionados",
+            "Detalhamento dos consultórios filtrados com produtividade e agenda resumida.",
+        )
+
+        sorted_items = sorted(consultorios.items(), key=lambda item: str(item[0]))
+
+        for consultorio, payload in sorted_items:
+            titulo = str(consultorio).strip() or "Consultório não informado"
+            self._draw_subsection_header(titulo)
+
+            metrics_bundle: Dict[str, object] = {}
+            if isinstance(payload, dict):
+                raw_metrics = payload.get("metrics") or payload.get("kpis")
+                if isinstance(raw_metrics, dict):
+                    metrics_bundle = raw_metrics
+
+            has_content = False
+            if metrics_bundle:
+                self._draw_kpi_cards(metrics_bundle)
+                has_content = True
+
+            top_data = pd.DataFrame()
+            if isinstance(payload, dict) and "top_profissionais" in payload:
+                source = payload.get("top_profissionais")
+                if isinstance(source, pd.DataFrame):
+                    top_data = source.copy()
+                elif isinstance(source, list):
+                    top_data = pd.DataFrame(source)
+                elif isinstance(source, dict):
+                    top_data = pd.DataFrame([source])
+
+            if not top_data.empty:
+                top_data = top_data.head(8).copy()
+
+                def _format_int(value: object) -> object:
+                    cleaned = self._safe_int(value)
+                    return cleaned if cleaned is not None else "—"
+
+                for column in ["Procedimentos", "Exames", "Cirurgias"]:
+                    if column in top_data.columns:
+                        top_data[column] = top_data[column].apply(_format_int)
+
+                if "Receita" in top_data.columns:
+                    top_data["Receita"] = top_data["Receita"].apply(
+                        self._format_currency_value
+                    )
+
+                table_columns: List[Tuple[str, float]] = [
+                    ("Profissional", 2.8),
+                    ("Especialidade", 2.4),
+                ]
+                optional_specs = [
+                    ("Procedimentos", 1.2),
+                    ("Exames", 1.0),
+                    ("Cirurgias", 1.0),
+                    ("Receita", 1.4),
+                ]
+                for label, width in optional_specs:
+                    if label in top_data.columns:
+                        table_columns.append((label, width))
+
+                ordered_columns = [label for label, _ in table_columns]
+                top_data = top_data[[col for col in ordered_columns if col in top_data.columns]]
+
+                if table_columns and not top_data.empty:
+                    self._write_body_line("Profissionais em destaque", height=5)
+                    self._draw_table(table_columns, top_data)
+                    has_content = True
+
+            agenda_data = pd.DataFrame()
+            if isinstance(payload, dict) and "agenda_resumo" in payload:
+                source = payload.get("agenda_resumo")
+                if isinstance(source, pd.DataFrame):
+                    agenda_data = source.copy()
+                elif isinstance(source, list):
+                    agenda_data = pd.DataFrame(source)
+                elif isinstance(source, dict):
+                    agenda_data = pd.DataFrame([source])
+
+            if not agenda_data.empty:
+                agenda_data = agenda_data.head(12).copy()
+
+                def _format_numeric(value: object) -> object:
+                    cleaned = self._safe_int(value)
+                    return cleaned if cleaned is not None else "—"
+
+                for column in ["Slots Ocupados", "Total Slots", "Médicos Ativos"]:
+                    if column in agenda_data.columns:
+                        agenda_data[column] = agenda_data[column].apply(_format_numeric)
+
+                agenda_columns: List[Tuple[str, float]] = []
+                for label, width in [
+                    ("Dia", 1.8),
+                    ("Turno", 1.2),
+                    ("Slots Ocupados", 1.3),
+                    ("Total Slots", 1.3),
+                    ("Médicos Ativos", 1.6),
+                ]:
+                    if label in agenda_data.columns:
+                        agenda_columns.append((label, width))
+
+                if agenda_columns:
+                    self._write_body_line("Agenda resumida", height=5)
+                    self._draw_table(agenda_columns, agenda_data)
+                    has_content = True
+
+            if not has_content:
+                self._write_body_line(
+                    "Sem dados consolidados disponíveis para este consultório.",
+                    height=5,
+                )
+
+            self.pdf.ln(PDF_SECTION_GAP / 2)
 
     def _render_med_info_section(self) -> None:
         med_df = self.med_df

@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Optional
+from datetime import datetime
+from typing import Dict, Optional
 from contextlib import contextmanager
 import numpy as np
 
@@ -1158,6 +1159,152 @@ if not ranking_para_pdf.empty:
     if sel_medicos:
         ranking_para_pdf = ranking_para_pdf[ranking_para_pdf["Profissional"].isin(sel_medicos)]
 
+consultorios_pdf_data: Dict[str, Dict[str, object]] = {}
+consultorio_alvo = sel_salas or salas
+if consultorio_alvo:
+    ranking_para_pdf_norm = ranking_para_pdf.copy()
+    if not ranking_para_pdf_norm.empty and "Consultório" in ranking_para_pdf_norm.columns:
+        ranking_para_pdf_norm["_SalaLabel"] = ranking_para_pdf_norm["Consultório"].apply(
+            format_consultorio_label
+        )
+
+    def _normalize_sala_column(df_source: pd.DataFrame) -> pd.Series:
+        if df_source is None or df_source.empty or "Sala" not in df_source.columns:
+            return pd.Series(dtype=str)
+        return df_source["Sala"].apply(
+            lambda value: format_consultorio_label(value) if pd.notna(value) else ""
+        )
+
+    fdf_base_norm = _normalize_sala_column(fdf_base)
+    fdf_norm = _normalize_sala_column(fdf)
+
+    for sala_nome in consultorio_alvo:
+        sala_label = format_consultorio_label(sala_nome)
+        entry: Dict[str, object] = {}
+        metrics_map: Dict[str, object] = {}
+
+        if not fdf_base.empty and not fdf_base_norm.empty:
+            sala_base_df = fdf_base.loc[fdf_base_norm == sala_label]
+            if not sala_base_df.empty:
+                sala_kpi = OccupancyAnalyzer.compute_basic_metrics(sala_base_df)
+                metrics_map["Taxa de ocupação"] = f"{sala_kpi.taxa_ocupacao:.1f}%"
+                metrics_map["Slots ocupados"] = sala_kpi.slots_ocupados
+                metrics_map["Slots livres"] = sala_kpi.slots_livres
+                metrics_map["Total de slots"] = sala_kpi.total_slots
+                if sala_kpi.medicos_distintos:
+                    metrics_map["Médicos distintos"] = sala_kpi.medicos_distintos
+
+        sala_ranking = pd.DataFrame()
+        if not ranking_para_pdf_norm.empty and "_SalaLabel" in ranking_para_pdf_norm.columns:
+            sala_ranking = ranking_para_pdf_norm.loc[
+                ranking_para_pdf_norm["_SalaLabel"] == sala_label
+            ]
+
+        if not sala_ranking.empty:
+            total_proced = (
+                pd.to_numeric(sala_ranking.get("Total Procedimentos"), errors="coerce")
+                .fillna(0)
+                .sum()
+            )
+            if total_proced > 0:
+                metrics_map["Total procedimentos"] = int(total_proced)
+
+            if "Receita" in sala_ranking.columns:
+                receita_total = (
+                    pd.to_numeric(sala_ranking["Receita"], errors="coerce")
+                    .fillna(0)
+                    .sum()
+                )
+                if receita_total > 0:
+                    metrics_map["Receita total"] = format_currency_value(receita_total)
+
+            sort_columns = []
+            ascending_flags = []
+            if "Total Procedimentos" in sala_ranking.columns:
+                sort_columns.append("Total Procedimentos")
+                ascending_flags.append(False)
+            if "Receita" in sala_ranking.columns:
+                sort_columns.append("Receita")
+                ascending_flags.append(False)
+            if sort_columns:
+                sala_sorted = sala_ranking.sort_values(
+                    sort_columns,
+                    ascending=ascending_flags,
+                    na_position="last",
+                )
+            else:
+                sala_sorted = sala_ranking.copy()
+
+            top_records = []
+            for _, row in sala_sorted.head(8).iterrows():
+                registro = {
+                    "Profissional": row.get("Profissional") or "Não informado",
+                    "Especialidade": row.get("Especialidade") or "Não informada",
+                }
+                col_map = {
+                    "Total Procedimentos": "Procedimentos",
+                    "Exames Solicitados": "Exames",
+                    "Cirurgias Solicitadas": "Cirurgias",
+                    "Receita": "Receita",
+                }
+                for origem, destino in col_map.items():
+                    if origem in sala_sorted.columns:
+                        registro[destino] = row.get(origem)
+                top_records.append(registro)
+
+            if top_records:
+                entry["top_profissionais"] = pd.DataFrame(top_records)
+
+        if metrics_map:
+            entry["metrics"] = metrics_map
+
+        if not fdf.empty and not fdf_norm.empty:
+            sala_agenda_df = fdf.loc[fdf_norm == sala_label]
+            if not sala_agenda_df.empty:
+                group_columns = [
+                    col for col in ["Dia", "Turno"] if col in sala_agenda_df.columns
+                ]
+                if group_columns:
+                    agenda_work = sala_agenda_df.copy()
+
+                    agg_spec = {"Total Slots": ("Sala", "size")}
+                    if "Ocupado" in agenda_work.columns:
+                        agg_spec["Slots Ocupados"] = (
+                            "Ocupado",
+                            lambda s: int(s.fillna(False).astype(bool).sum()),
+                        )
+                    if "Médico" in agenda_work.columns:
+                        agg_spec["Médicos Ativos"] = ("Médico", pd.Series.nunique)
+
+                    agenda_summary = (
+                        agenda_work.groupby(group_columns, observed=False)
+                        .agg(**agg_spec)
+                        .reset_index()
+                    )
+
+                    if "Slots Ocupados" in agenda_summary.columns:
+                        agenda_summary["Slots Ocupados"] = agenda_summary[
+                            "Slots Ocupados"
+                        ].astype(int)
+                    agenda_summary["Total Slots"] = agenda_summary["Total Slots"].astype(int)
+                    if "Médicos Ativos" in agenda_summary.columns:
+                        agenda_summary["Médicos Ativos"] = agenda_summary[
+                            "Médicos Ativos"
+                        ].astype(int)
+
+                    if "Dia" in agenda_summary.columns:
+                        agenda_summary["Dia"] = agenda_summary["Dia"].apply(
+                            lambda value: value.strftime("%d/%m/%Y")
+                            if isinstance(value, (pd.Timestamp, datetime))
+                            else str(value)
+                        )
+
+                    agenda_summary = agenda_summary.sort_values(group_columns)
+                    entry["agenda_resumo"] = agenda_summary.head(12)
+
+        if entry:
+            consultorios_pdf_data[sala_label] = entry
+
 pdf_builder = DashboardPDFBuilder(
     data_source=fonte,
     summary_metrics=summary_metrics,
@@ -1166,6 +1313,7 @@ pdf_builder = DashboardPDFBuilder(
     agenda_df=fdf,
     overview_timeseries=overview_timeseries,
     top_medicos_turnos=top_medicos_turnos,
+    consultorios_data=consultorios_pdf_data,
     ranking_limits={
         "total": st.session_state.get("ranking_produtividade_top", 10),
         "exames": st.session_state.get("ranking_produtividade_top", 10),
