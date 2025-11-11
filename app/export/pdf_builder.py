@@ -170,7 +170,6 @@ class DashboardPDFBuilder:
         self._render_ranking_section()
         self._render_consultorios_section()
         self._render_med_info_section()
-        self._render_agenda_section()
         self._render_toc()
 
         output = self.pdf.output(dest="S")
@@ -196,59 +195,53 @@ class DashboardPDFBuilder:
         pdf = self.pdf
         pdf.add_page()
 
-        pdf.set_fill_color(*PDF_PRIMARY_COLOR)
-        pdf.rect(0, 0, pdf.w, pdf.h * 0.45, "F")
-        pdf.set_fill_color(*PDF_SOFT_BACKGROUND)
-        pdf.rect(0, pdf.h * 0.45, pdf.w, pdf.h * 0.55, "F")
-
-        pdf.set_xy(pdf.l_margin, 40)
-        family, style, size = PDF_TITLE_FONT
-        pdf.set_font(family, style, size)
-        pdf.set_text_color(255, 255, 255)
-        pdf.multi_cell(
-            self.effective_width,
-            12,
-            _sanitize_pdf_text("Relatório Completo"),
-        )
-
+        pdf.set_xy(pdf.l_margin, PDF_MARGIN)
         family, style, size = PDF_SUBTITLE_FONT
         pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_MUTED_COLOR)
         pdf.multi_cell(
             self.effective_width,
-            8,
+            6,
             _sanitize_pdf_text("Dashboard de Ocupação dos Consultórios"),
         )
 
-        block_x = pdf.l_margin
-        block_y = pdf.get_y() + 10
-        block_w = self.effective_width
-        block_h = 60
-        pdf.set_fill_color(*PDF_WHITE)
-        pdf.set_draw_color(*PDF_ACCENT_COLOR)
-        pdf.set_line_width(0.4)
-        pdf.rect(block_x, block_y, block_w, block_h, "DF")
+        pdf.ln(4)
+        family, style, size = PDF_TITLE_FONT
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_PRIMARY_COLOR)
+        pdf.multi_cell(
+            self.effective_width,
+            14,
+            _sanitize_pdf_text("Relatório Completo"),
+        )
 
-        pdf.set_xy(block_x + PDF_CARD_PADDING, block_y + PDF_CARD_PADDING)
+        pdf.ln(2)
+        pdf.set_draw_color(*PDF_ACCENT_COLOR)
+        pdf.set_line_width(0.6)
+        current_y = pdf.get_y()
+        pdf.line(
+            pdf.l_margin,
+            current_y,
+            pdf.w - pdf.r_margin,
+            current_y,
+        )
+        pdf.ln(6)
+
         family, style, size = PDF_SECTION_SUBTITLE_FONT
         pdf.set_font(family, style, size)
         pdf.set_text_color(*PDF_PRIMARY_COLOR)
         pdf.cell(0, 6, _sanitize_pdf_text("Sobre este relatório"), ln=1)
 
         self._set_body_font()
-        pdf.set_x(block_x + PDF_CARD_PADDING)
         about_lines = [
-            "Panorama executivo com indicadores de produtividade e agenda.",
+            "Panorama executivo com indicadores de produtividade dos consultórios.",
             f"Fonte dos dados: {self.data_source}.",
             "Geração automática via Dashboard Consultórios.",
         ]
         for line in about_lines:
-            pdf.multi_cell(
-                block_w - 2 * PDF_CARD_PADDING,
-                6,
-                _sanitize_pdf_text(line),
-            )
-        pdf.set_y(block_y + block_h + 12)
+            self._write_body_line(line, height=5)
 
+        pdf.ln(4)
         self._set_body_font()
 
     def _draw_section_header(self, title: str, subtitle: Optional[str] = None) -> None:
@@ -256,22 +249,19 @@ class DashboardPDFBuilder:
         if pdf.get_y() < PDF_MARGIN:
             pdf.set_y(PDF_MARGIN)
         start_y = pdf.get_y()
-        pdf.set_fill_color(*PDF_ACCENT_COLOR)
-        pdf.rect(pdf.l_margin, start_y, 4, 12, "F")
-        pdf.set_xy(pdf.l_margin + 8, start_y)
-
         family, style, size = PDF_SECTION_TITLE_FONT
         pdf.set_font(family, style, size)
         pdf.set_text_color(*PDF_PRIMARY_COLOR)
-        pdf.cell(0, 10, _sanitize_pdf_text(title), ln=1)
+        pdf.set_xy(pdf.l_margin, start_y)
+        pdf.cell(0, 9, _sanitize_pdf_text(title), ln=1)
 
         if subtitle:
             family, style, size = PDF_SECTION_SUBTITLE_FONT
             pdf.set_font(family, style, size)
             pdf.set_text_color(*PDF_MUTED_COLOR)
-            pdf.multi_cell(0, 6, _sanitize_pdf_text(subtitle))
+            pdf.multi_cell(0, 5, _sanitize_pdf_text(subtitle))
 
-        pdf.ln(2)
+        pdf.ln(1)
         self._set_body_font()
 
     def _draw_subsection_header(self, title: str) -> None:
@@ -281,18 +271,24 @@ class DashboardPDFBuilder:
         self.pdf.cell(0, 8, _sanitize_pdf_text(title), ln=1)
         self._set_body_font()
 
-    def _write_body_line(self, text: str, height: float = 6) -> None:
+    def _write_body_line(
+        self, text: str, height: float = 6, *, indent: float = 0.0
+    ) -> None:
         sanitized = _sanitize_pdf_text(text)
         if not sanitized:
             self.pdf.ln(height)
             return
 
-        self.pdf.set_x(self.pdf.l_margin)
-        width = self.effective_width or (self.pdf.w - self.pdf.l_margin - self.pdf.r_margin)
+        width = self.effective_width or (
+            self.pdf.w - self.pdf.l_margin - self.pdf.r_margin
+        )
+        if indent:
+            width -= indent
         if width <= 0:
             self.pdf.ln(height)
             return
 
+        self.pdf.set_x(self.pdf.l_margin + indent)
         self.pdf.multi_cell(width, height, sanitized)
 
     def _draw_kpi_cards(self, metrics: Dict[str, object]) -> None:
@@ -320,17 +316,31 @@ class DashboardPDFBuilder:
             inner_x = x + PDF_CARD_PADDING
             inner_width = card_width - 2 * PDF_CARD_PADDING
 
-            family, style, size = PDF_KPI_LABEL_FONT
-            pdf.set_font(family, style, size)
+            label_text = _sanitize_pdf_text(str(label))
+            family, style, base_label_size = PDF_KPI_LABEL_FONT
+            label_size = float(base_label_size)
+            pdf.set_font(family, style, label_size)
+            while (
+                pdf.get_string_width(label_text) > inner_width and label_size > 6
+            ):
+                label_size -= 0.5
+                pdf.set_font(family, style, label_size)
             pdf.set_text_color(*PDF_MUTED_COLOR)
             pdf.set_xy(inner_x, y + 4)
-            pdf.multi_cell(inner_width, 5, _sanitize_pdf_text(str(label)))
+            pdf.multi_cell(inner_width, 4.5, label_text)
 
-            family, style, size = PDF_KPI_VALUE_FONT
-            pdf.set_font(family, style, size)
+            value_text = _sanitize_pdf_text(str(value))
+            family, style, base_value_size = PDF_KPI_VALUE_FONT
+            value_size = float(base_value_size)
+            pdf.set_font(family, style, value_size)
+            while (
+                pdf.get_string_width(value_text) > inner_width and value_size > 9
+            ):
+                value_size -= 0.5
+                pdf.set_font(family, style, value_size)
             pdf.set_text_color(*PDF_PRIMARY_COLOR)
             pdf.set_xy(inner_x, y + PDF_CARD_HEIGHT / 2)
-            pdf.cell(inner_width, 6, _sanitize_pdf_text(str(value)))
+            pdf.cell(inner_width, 6, value_text)
 
             if column == cards_per_row - 1 or idx == len(items) - 1:
                 pdf.set_y(y + PDF_CARD_HEIGHT + PDF_CARD_GAP)
@@ -999,13 +1009,21 @@ class DashboardPDFBuilder:
                         convenios_txt: List[str] = []
                         for _, plano_row in grupo_top.iterrows():
                             qtd = self._safe_int(plano_row.get("Profissionais", 0)) or 0
-                            plano_nome = plano_row.get("Planos", "Nao informado") or "Nao informado"
+                            plano_nome = (
+                                plano_row.get("Planos", "Nao informado") or "Nao informado"
+                            )
                             sufixo = "profissional" if qtd == 1 else "profissionais"
                             convenios_txt.append(f"{plano_nome}: {qtd} {sufixo}")
-                        resumo_conv = "; ".join(convenios_txt) if convenios_txt else "Nenhum convênio informado"
-                        self._write_body_line(
-                            f"- {consultorio_nome}: {resumo_conv}", height=5
-                        )
+
+                        self._write_body_line(f"- {consultorio_nome}:", height=5)
+                        if convenios_txt:
+                            for item in convenios_txt:
+                                self._write_body_line(f"• {item}", height=5, indent=5)
+                        else:
+                            self._write_body_line(
+                                "• Nenhum convênio informado", height=5, indent=5
+                            )
+                        self.pdf.ln(1)
 
         if "Valor Aluguel" in med_pdf.columns:
             valores = med_pdf["Valor Aluguel"].dropna()
@@ -1023,74 +1041,6 @@ class DashboardPDFBuilder:
                 self._write_body_line(
                     f"- Máximo: {self._format_currency(maximo)}", height=5
                 )
-
-    def _render_agenda_section(self) -> None:
-        self._start_section(
-            "Agenda Filtrada",
-            "Recorte dos agendamentos conforme filtros aplicados no dashboard.",
-        )
-        agenda_df = self.agenda_df
-        if agenda_df is None or agenda_df.empty:
-            self._write_body_line("Nenhum agendamento encontrado para os filtros atuais.")
-            return
-
-        agenda_view = agenda_df.copy()
-        sort_cols = [c for c in ["Sala", "Dia", "Turno"] if c in agenda_view.columns]
-        if sort_cols:
-            agenda_view = agenda_view.sort_values(sort_cols)
-
-        total_registros = len(agenda_view)
-        summary_lines = [f"Total de agendamentos: {total_registros}"]
-        if "Sala" in agenda_view.columns:
-            salas_distintas = agenda_view["Sala"].dropna().nunique()
-            summary_lines.append(f"Salas distintas: {salas_distintas}")
-        if "Médico" in agenda_view.columns:
-            medicos_distintos = agenda_view["Médico"].dropna().nunique()
-            summary_lines.append(f"Profissionais distintos: {medicos_distintos}")
-
-        for resumo in summary_lines:
-            self._write_body_line(resumo, height=5)
-
-        self.pdf.ln(2)
-
-        agenda_expected = ["Sala", "Dia", "Turno", "Médico"]
-        for col in agenda_expected:
-            if col not in agenda_view.columns:
-                agenda_view[col] = "—"
-
-        agenda_view = agenda_view[agenda_expected]
-
-        for col in agenda_view.columns:
-            series = agenda_view[col]
-            if pd.api.types.is_categorical_dtype(series):
-                if "—" not in series.cat.categories:
-                    agenda_view[col] = series.cat.add_categories(["—"])
-
-        agenda_view = agenda_view.fillna("—")
-
-        def _format_dia(value: object) -> object:
-            if isinstance(value, (datetime, pd.Timestamp)):
-                return value.strftime("%d/%m/%Y")
-            return value
-
-        if "Dia" in agenda_view.columns:
-            agenda_view["Dia"] = agenda_view["Dia"].apply(_format_dia)
-
-        agenda_table_columns: List[Tuple[str, float]] = [
-            ("Sala", 1.4),
-            ("Dia", 1.8),
-            ("Turno", 1.4),
-            ("Médico", 3.4),
-        ]
-
-        chunk_size = 30
-        for start in range(0, total_registros, chunk_size):
-            bloco = agenda_view.iloc[start : start + chunk_size]
-            if bloco.empty:
-                continue
-            titulo = "Agenda detalhada" if start == 0 else f"Agenda detalhada (registros {start + 1}-{start + len(bloco)})"
-            self._draw_subsection_header(titulo)
-            self._draw_table(agenda_table_columns, bloco)
 
     def _render_toc(self) -> None:
         if not self.sections_index:

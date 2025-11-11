@@ -7,6 +7,36 @@ from typing import Iterable, MutableMapping, Optional, Sequence
 import pandas as pd
 
 
+DAY_ABBREVIATIONS = {
+    "segunda-feira": "Seg",
+    "segunda": "Seg",
+    "terca-feira": "Ter",
+    "terça-feira": "Ter",
+    "terca": "Ter",
+    "terça": "Ter",
+    "quarta-feira": "Qua",
+    "quarta": "Qua",
+    "quinta-feira": "Qui",
+    "quinta": "Qui",
+    "sexta-feira": "Sex",
+    "sexta": "Sex",
+    "sabado": "Sáb",
+    "sábado": "Sáb",
+    "domingo": "Dom",
+}
+
+TURN_ABBREVIATIONS = {
+    "manha": "Man",
+    "manhã": "Man",
+    "matutino": "Man",
+    "tarde": "Tar",
+    "vespertino": "Tar",
+    "noite": "Noi",
+    "noturno": "Noi",
+    "integral": "Int",
+}
+
+
 @dataclass
 class OccupancyKPIs:
     """Bundle of high level occupancy indicators for the dashboard."""
@@ -86,8 +116,16 @@ class OccupancyAnalyzer:
         """Produce the dictionary used on the executive summary card."""
 
         kpis = self.get_kpi_summary()
-        dias = ", ".join(self.selected_dias) if self.selected_dias else "Todos"
-        turnos = ", ".join(self.selected_turnos) if self.selected_turnos else "Todos"
+        dias = (
+            ", ".join(self._abbreviate_filters(self.selected_dias, DAY_ABBREVIATIONS))
+            if self.selected_dias
+            else "Todos"
+        )
+        turnos = (
+            ", ".join(self._abbreviate_filters(self.selected_turnos, TURN_ABBREVIATIONS))
+            if self.selected_turnos
+            else "Todos"
+        )
 
         summary = {
             "Consultórios selecionados": kpis.total_salas,
@@ -109,6 +147,25 @@ class OccupancyAnalyzer:
                 summary["Receita total (produtividade)"] = total_receita
 
         return summary
+
+    @staticmethod
+    def _abbreviate_filters(
+        values: Iterable[str], mapping: MutableMapping[str, str]
+    ) -> Sequence[str]:
+        abbreviations = []
+        for value in values:
+            if value is None:
+                continue
+            text = str(value).strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in mapping:
+                abbreviations.append(mapping[key])
+                continue
+            base = text.split()[0]
+            abbreviations.append(base[:3].title())
+        return abbreviations
 
     def build_timeseries(self, group_by: Sequence[str]) -> pd.DataFrame:
         """Aggregate occupancy percentage grouped by the given columns."""
