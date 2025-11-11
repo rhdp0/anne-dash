@@ -8,9 +8,7 @@ from io import BytesIO
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
-from pandas.api import types as pd_types
 from fpdf import FPDF
-from fpdf.errors import FPDFException
 
 
 PDF_PRIMARY_COLOR = (27, 59, 95)
@@ -263,24 +261,7 @@ class DashboardPDFBuilder:
             self.pdf.ln(height)
             return
 
-        try:
-            self.pdf.multi_cell(width, height, sanitized)
-        except FPDFException:
-            # Handle extremely long tokens that cannot be wrapped automatically
-            avg_char_width = self.pdf.get_string_width("M") or 1
-            max_chars = max(int(width / avg_char_width), 1)
-
-            def _hard_wrap(token: str) -> str:
-                if len(token) <= max_chars:
-                    return token
-                chunks = [token[i : i + max_chars] for i in range(0, len(token), max_chars)]
-                return "\n".join(chunks)
-
-            wrapped_parts = []
-            for raw_part in sanitized.split(" "):
-                wrapped_parts.append(_hard_wrap(raw_part))
-            fallback_text = " ".join(wrapped_parts)
-            self.pdf.multi_cell(width, height, fallback_text)
+        self.pdf.multi_cell(width, height, sanitized)
 
     def _draw_kpi_cards(self, metrics: Dict[str, object]) -> None:
         if not metrics:
@@ -798,12 +779,15 @@ class DashboardPDFBuilder:
         for col in agenda_expected:
             if col not in agenda_view.columns:
                 agenda_view[col] = "—"
-            else:
-                if pd_types.is_categorical_dtype(agenda_view[col]):
-                    agenda_view[col] = agenda_view[col].astype("object")
-                agenda_view[col] = agenda_view[col].fillna("—")
 
         agenda_view = agenda_view[agenda_expected]
+
+        for col in agenda_view.columns:
+            series = agenda_view[col]
+            if pd.api.types.is_categorical_dtype(series):
+                agenda_view[col] = series.cat.add_categories(["—"])
+
+        agenda_view = agenda_view.fillna("—")
 
         def _format_dia(value: object) -> object:
             if isinstance(value, (datetime, pd.Timestamp)):
