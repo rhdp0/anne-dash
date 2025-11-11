@@ -103,6 +103,8 @@ class DashboardPDFBuilder:
         ranking_df: Optional[pd.DataFrame] = None,
         med_df: Optional[pd.DataFrame] = None,
         agenda_df: Optional[pd.DataFrame] = None,
+        overview_timeseries: Optional[Dict[str, pd.DataFrame]] = None,
+        top_medicos_turnos: Optional[pd.DataFrame] = None,
         ranking_limits: Optional[Dict[str, int]] = None,
     ) -> None:
         self.data_source = data_source or "Origem não informada"
@@ -110,6 +112,16 @@ class DashboardPDFBuilder:
         self.ranking_df = ranking_df.copy() if ranking_df is not None else pd.DataFrame()
         self.med_df = med_df.copy() if med_df is not None else pd.DataFrame()
         self.agenda_df = agenda_df.copy() if agenda_df is not None else pd.DataFrame()
+        self.overview_timeseries: Dict[str, pd.DataFrame] = {}
+        if overview_timeseries:
+            for key, value in overview_timeseries.items():
+                if isinstance(value, pd.DataFrame):
+                    self.overview_timeseries[key] = value.copy()
+        self.top_medicos_turnos = (
+            top_medicos_turnos.copy()
+            if top_medicos_turnos is not None
+            else pd.DataFrame()
+        )
         self.ranking_limits = ranking_limits or {}
 
         self.pdf: Optional[DashboardPDF] = None
@@ -135,6 +147,7 @@ class DashboardPDFBuilder:
         self.pdf.add_page()
         self._set_body_font()
 
+        self._render_overview_section()
         self._render_summary_section()
         self._render_ranking_section()
         self._render_med_info_section()
@@ -457,6 +470,128 @@ class DashboardPDFBuilder:
             self.pdf.ln(PDF_SECTION_GAP)
         self.sections_index.append((title, self.pdf.page_no()))
         self._draw_section_header(title, subtitle)
+
+    def _render_overview_section(self) -> None:
+        overview_map = self.overview_timeseries or {}
+        by_sala = overview_map.get("por_sala")
+        by_dia = overview_map.get("por_dia")
+        by_turno = overview_map.get("por_turno")
+        top_medicos = self.top_medicos_turnos
+
+        datasets = [by_sala, by_dia, by_turno, top_medicos]
+        if all(df is None or df.empty for df in datasets):
+            return
+
+        self._start_section(
+            "Panorama de Ocupação",
+            "Distribuição agregada dos slots ocupados para orientar a leitura do relatório.",
+        )
+        self._write_body_line(
+            "Os quadros a seguir espelham os dados utilizados nos gráficos de visão geral do dashboard.",
+            height=5,
+        )
+        self.pdf.ln(1)
+
+        def _render_timeseries_table(
+            df_source: Optional[pd.DataFrame],
+            *,
+            title: str,
+            primary_label: str,
+            rename_map: Optional[Dict[str, str]] = None,
+        ) -> None:
+            self._draw_subsection_header(title)
+            if df_source is None or df_source.empty:
+                self._write_body_line("Sem dados disponíveis para este agrupamento.", height=5)
+                return
+
+            working = df_source.copy()
+            if rename_map:
+                working = working.rename(columns=rename_map)
+
+            if "Taxa de Ocupação (%)" in working.columns:
+                working = working.sort_values("Taxa de Ocupação (%)", ascending=False)
+                working["Taxa de Ocupação (%)"] = working["Taxa de Ocupação (%)"].apply(
+                    lambda value: f"{float(value):.1f}%" if pd.notna(value) else "—"
+                )
+
+            def _format_slot(value: object) -> object:
+                cleaned = self._safe_int(value)
+                return cleaned if cleaned is not None else "—"
+
+            for col in ["Slots Ocupados", "Total Slots"]:
+                if col in working.columns:
+                    working[col] = working[col].apply(_format_slot)
+
+            columns_order = [
+                primary_label,
+                "Taxa de Ocupação (%)",
+                "Slots Ocupados",
+                "Total Slots",
+            ]
+            available_cols = [col for col in columns_order if col in working.columns]
+            if not available_cols:
+                self._write_body_line("Estrutura de dados inesperada para esta tabela.", height=5)
+                return
+
+            limit = 15
+            total_registros = len(working)
+            working = working[available_cols]
+            display = working.head(limit)
+            if total_registros > limit:
+                self._write_body_line(
+                    f"Listando os {limit} primeiros registros de um total de {total_registros} ordenados por maior ocupação.",
+                    height=5,
+                )
+
+            columns_spec: List[Tuple[str, float]] = []
+            for label in available_cols:
+                if label == primary_label:
+                    columns_spec.append((label, 2.6))
+                elif label == "Taxa de Ocupação (%)":
+                    columns_spec.append((label, 1.6))
+                else:
+                    columns_spec.append((label, 1.2))
+
+            self._draw_table(columns_spec, display)
+
+        _render_timeseries_table(
+            by_sala,
+            title="Ocupação por consultório",
+            primary_label="Consultório",
+            rename_map={"Sala": "Consultório"},
+        )
+        _render_timeseries_table(
+            by_dia,
+            title="Ocupação por dia da semana",
+            primary_label="Dia",
+        )
+        _render_timeseries_table(
+            by_turno,
+            title="Ocupação por turno",
+            primary_label="Turno",
+        )
+
+        self._draw_subsection_header("Top médicos por turnos utilizados")
+        if top_medicos is None or top_medicos.empty:
+            self._write_body_line(
+                "Sem registros de profissionais ocupando turnos nos filtros atuais.",
+                height=5,
+            )
+        else:
+            med_table = top_medicos.copy()
+            med_table["Turnos Utilizados"] = pd.to_numeric(
+                med_table.get("Turnos Utilizados"), errors="coerce"
+            ).fillna(0).astype(int)
+            total_medicos = len(med_table)
+            self._write_body_line(
+                f"Total de profissionais com turnos ocupados: {total_medicos}.",
+                height=5,
+            )
+            med_columns: List[Tuple[str, float]] = [
+                ("Médico", 3.2),
+                ("Turnos Utilizados", 1.4),
+            ]
+            self._draw_table(med_columns, med_table)
 
     def _render_summary_section(self) -> None:
         if not self.summary_metrics:
