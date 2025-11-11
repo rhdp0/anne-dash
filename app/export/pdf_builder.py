@@ -783,6 +783,13 @@ class DashboardPDFBuilder:
         agenda_view = agenda_view[agenda_expected]
         agenda_view = agenda_view.fillna("—")
 
+        for col in agenda_view.columns:
+            series = agenda_view[col]
+            if pd.api.types.is_categorical_dtype(series):
+                agenda_view[col] = series.cat.add_categories(["—"])
+
+        agenda_view = agenda_view.fillna("—")
+
         def _format_dia(value: object) -> object:
             if isinstance(value, (datetime, pd.Timestamp)):
                 return value.strftime("%d/%m/%Y")
