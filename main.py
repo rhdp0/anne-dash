@@ -359,6 +359,12 @@ occupancy_service = OccupancyAnalyzer(
     selected_medicos=sel_medicos,
     ranking_df=ranking_prod_total,
 )
+overview_timeseries = {
+    "por_sala": occupancy_service.build_timeseries(["Sala"]),
+    "por_dia": occupancy_service.build_timeseries(["Dia"]),
+    "por_turno": occupancy_service.build_timeseries(["Turno"]),
+}
+top_medicos_turnos = occupancy_service.top_medicos_por_turnos(15)
 kpis = occupancy_service.get_kpi_summary()
 summary_metrics = occupancy_service.build_summary_metadata()
 if "Receita total (produtividade)" in summary_metrics:
@@ -383,7 +389,7 @@ if selected_section == "📊 Visão Geral":
         kc2.metric("Médicos distintos", kpis.medicos_distintos)
 
         colA, colB = sec.columns(2)
-        by_sala = occupancy_service.build_timeseries(["Sala"])
+        by_sala = overview_timeseries.get("por_sala", pd.DataFrame())
         fig1 = px.bar(
             by_sala,
             x="Sala",
@@ -395,7 +401,7 @@ if selected_section == "📊 Visão Geral":
         fig1.update_yaxes(range=[0, 100])
         colA.plotly_chart(fig1, use_container_width=True)
 
-        by_dia = occupancy_service.build_timeseries(["Dia"])
+        by_dia = overview_timeseries.get("por_dia", pd.DataFrame())
         fig2 = px.bar(
             by_dia,
             x="Dia",
@@ -408,7 +414,7 @@ if selected_section == "📊 Visão Geral":
         colB.plotly_chart(fig2, use_container_width=True)
 
         colC, colD = sec.columns(2)
-        by_turno = occupancy_service.build_timeseries(["Turno"])
+        by_turno = overview_timeseries.get("por_turno", pd.DataFrame())
         fig3 = px.bar(
             by_turno,
             x="Turno",
@@ -420,7 +426,7 @@ if selected_section == "📊 Visão Geral":
         fig3.update_yaxes(range=[0, 100])
         colC.plotly_chart(fig3, use_container_width=True)
 
-        top_med = occupancy_service.top_medicos_por_turnos(15)
+        top_med = top_medicos_turnos
         if not top_med.empty:
             fig4 = px.bar(
                 top_med,
@@ -1158,6 +1164,8 @@ pdf_builder = DashboardPDFBuilder(
     ranking_df=ranking_para_pdf,
     med_df=med_enriched if not med_df.empty else pd.DataFrame(),
     agenda_df=fdf,
+    overview_timeseries=overview_timeseries,
+    top_medicos_turnos=top_medicos_turnos,
     ranking_limits={
         "total": st.session_state.get("ranking_produtividade_top", 10),
         "exames": st.session_state.get("ranking_produtividade_top", 10),
