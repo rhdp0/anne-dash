@@ -5,10 +5,12 @@ import re
 import unicodedata
 from datetime import datetime
 from io import BytesIO
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 from fpdf import FPDF
+import plotly.graph_objects as go
+import plotly.io as pio
 
 
 PDF_PRIMARY_COLOR = (27, 59, 95)
@@ -32,6 +34,8 @@ PDF_BODY_FONT = ("Helvetica", "", 10)
 PDF_SUBSECTION_FONT = ("Helvetica", "B", 12)
 PDF_KPI_VALUE_FONT = ("Helvetica", "B", 16)
 PDF_KPI_LABEL_FONT = ("Helvetica", "", 9)
+
+PX_PER_MM = 96 / 25.4
 
 
 class DashboardPDF(FPDF):
@@ -107,6 +111,27 @@ class DashboardPDFBuilder:
         top_medicos_turnos: Optional[pd.DataFrame] = None,
         ranking_limits: Optional[Dict[str, int]] = None,
         consultorios_data: Optional[Dict[str, Dict[str, object]]] = None,
+        overview_figures: Optional[
+            Union[
+                Dict[str, go.Figure],
+                Sequence[Tuple[str, go.Figure]],
+            ]
+        ] = None,
+        ranking_figures: Optional[
+            Union[
+                Dict[str, go.Figure],
+                Sequence[Tuple[str, go.Figure]],
+            ]
+        ] = None,
+        consultorio_figures: Optional[
+            Dict[str, Union[Dict[str, go.Figure], Sequence[Tuple[str, go.Figure]]]]
+        ] = None,
+        planos_figures: Optional[
+            Union[
+                Dict[str, go.Figure],
+                Sequence[Tuple[str, go.Figure]],
+            ]
+        ] = None,
     ) -> None:
         self.data_source = data_source or "Origem não informada"
         self.summary_metrics = summary_metrics or {}
@@ -140,6 +165,15 @@ class DashboardPDFBuilder:
         self.pdf: Optional[DashboardPDF] = None
         self.effective_width: float = 0.0
         self.sections_index: List[Tuple[str, int]] = []
+        self.overview_figures = self._normalize_figures(overview_figures)
+        self.ranking_figures = self._normalize_figures(ranking_figures)
+        self.planos_figures = self._normalize_figures(planos_figures)
+        self.consultorio_figures: Dict[str, List[Tuple[str, go.Figure]]] = {}
+        if consultorio_figures:
+            for consultorio, payload in consultorio_figures.items():
+                figures = self._normalize_figures(payload)
+                if figures:
+                    self.consultorio_figures[str(consultorio)] = figures
 
     # ------------------------------------------------------------------
     # Public API
@@ -349,6 +383,110 @@ class DashboardPDFBuilder:
 
         pdf.ln(2)
         self._set_body_font()
+
+    def _normalize_figures(
+        self,
+        figures: Optional[
+            Union[
+                Dict[str, go.Figure],
+                Sequence[Tuple[str, go.Figure]],
+            ]
+        ],
+    ) -> List[Tuple[str, go.Figure]]:
+        normalized: List[Tuple[str, go.Figure]] = []
+        if not figures:
+            return normalized
+
+        if isinstance(figures, dict):
+            items = figures.items()
+        else:
+            items = figures
+
+        for label, figure in items:
+            if isinstance(figure, go.Figure):
+                caption = str(label).strip() if label is not None else "Gráfico"
+                normalized.append((caption, figure))
+        return normalized
+
+    def _figure_to_image(
+        self, figure: go.Figure
+    ) -> Optional[Tuple[BytesIO, float, float]]:  # pragma: no cover - rendering helper
+        if self.pdf is None:
+            return None
+
+        target_width_mm = max(self.effective_width, 1.0)
+        layout_width = getattr(figure.layout, "width", None)
+        layout_height = getattr(figure.layout, "height", None)
+        if layout_width and layout_height and layout_width > 0:
+            aspect_ratio = float(layout_height) / float(layout_width)
+        else:
+            aspect_ratio = 0.6
+        aspect_ratio = max(aspect_ratio, 0.1)
+
+        max_height_mm = max(
+            self.pdf.h - self.pdf.t_margin - self.pdf.b_margin - 10,
+            40,
+        )
+        chart_height_mm = target_width_mm * aspect_ratio
+        if chart_height_mm > max_height_mm and chart_height_mm > 0:
+            scale = max_height_mm / chart_height_mm
+            chart_height_mm = max_height_mm
+            target_width_mm *= scale
+
+        width_px = max(1, int(round(target_width_mm * PX_PER_MM)))
+        height_px = max(1, int(round(chart_height_mm * PX_PER_MM)))
+
+        try:
+            image_bytes = pio.to_image(
+                figure,
+                format="png",
+                width=width_px,
+                height=height_px,
+                scale=1,
+            )
+        except Exception:
+            return None
+
+        return BytesIO(image_bytes), target_width_mm, chart_height_mm
+
+    def _draw_chart(
+        self, figure: go.Figure, caption: Optional[str] = None
+    ) -> None:  # pragma: no cover - rendering helper
+        if self.pdf is None:
+            return
+        image_payload = self._figure_to_image(figure)
+        if not image_payload:
+            return
+
+        image_stream, width_mm, height_mm = image_payload
+        caption_text = _sanitize_pdf_text(caption or "")
+        caption_height = 5 if caption_text else 0
+        required_height = height_mm + caption_height + 2
+        if self.pdf.get_y() + required_height > self.pdf.page_break_trigger:
+            self.pdf.add_page()
+            self._set_body_font()
+
+        x_offset = self.pdf.l_margin
+        if width_mm < self.effective_width:
+            x_offset += (self.effective_width - width_mm) / 2
+
+        start_y = self.pdf.get_y()
+        self.pdf.image(image_stream, x=x_offset, y=start_y, w=width_mm)
+        self.pdf.set_y(start_y + height_mm + 1.5)
+
+        if caption_text:
+            family, style, size = PDF_BODY_FONT
+            self.pdf.set_font(family, "I", max(size - 1, 8))
+            self.pdf.set_text_color(*PDF_MUTED_COLOR)
+            self.pdf.set_x(self.pdf.l_margin)
+            self.pdf.multi_cell(self.effective_width, 4.5, caption_text, align="C")
+            self.pdf.ln(1)
+            self._set_body_font()
+
+    def _draw_figures_group(self, figures: Sequence[Tuple[str, go.Figure]]) -> None:
+        for caption, figure in figures:
+            if isinstance(figure, go.Figure):
+                self._draw_chart(figure, caption)
 
     def _draw_table(
         self,
@@ -600,6 +738,10 @@ class DashboardPDFBuilder:
             primary_label="Turno",
         )
 
+        if self.overview_figures:
+            self.pdf.ln(2)
+            self._draw_figures_group(self.overview_figures)
+
         self._draw_subsection_header("Top médicos por turnos utilizados")
         if top_medicos is None or top_medicos.empty:
             self._write_body_line(
@@ -793,6 +935,10 @@ class DashboardPDFBuilder:
                 min(limit_receita, len(ranking_df)),
             )
 
+        if self.ranking_figures:
+            self.pdf.ln(2)
+            self._draw_figures_group(self.ranking_figures)
+
     def _render_consultorios_section(self) -> None:
         consultorios = self.consultorios_data or {}
         if not consultorios:
@@ -904,6 +1050,16 @@ class DashboardPDFBuilder:
                     self._write_body_line("Agenda resumida", height=5)
                     self._draw_table(agenda_columns, agenda_data)
                     has_content = True
+
+            figuras_consultorio = (
+                self.consultorio_figures.get(titulo)
+                or self.consultorio_figures.get(str(consultorio))
+            )
+            if figuras_consultorio:
+                if not has_content:
+                    self._write_body_line("Visualizações do consultório", height=5)
+                self._draw_figures_group(figuras_consultorio)
+                has_content = True
 
             if not has_content:
                 self._write_body_line(
@@ -1024,6 +1180,10 @@ class DashboardPDFBuilder:
                                 "• Nenhum convênio informado", height=5, indent=5
                             )
                         self.pdf.ln(1)
+
+        if self.planos_figures:
+            self.pdf.ln(1)
+            self._draw_figures_group(self.planos_figures)
 
         if "Valor Aluguel" in med_pdf.columns:
             valores = med_pdf["Valor Aluguel"].dropna()
