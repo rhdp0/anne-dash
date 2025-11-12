@@ -299,10 +299,28 @@ class DashboardPDFBuilder:
         self._set_body_font()
 
     def _draw_subsection_header(self, title: str) -> None:
+        pdf = self.pdf
         family, style, size = PDF_SUBSECTION_FONT
-        self.pdf.set_font(family, style, size)
-        self.pdf.set_text_color(*PDF_ACCENT_COLOR)
-        self.pdf.cell(0, 8, _sanitize_pdf_text(title), ln=1)
+        pdf.set_font(family, style, size)
+        pdf.set_text_color(*PDF_ACCENT_COLOR)
+
+        sanitized = _sanitize_pdf_text(title)
+        width = self.effective_width
+        if not width or width <= 0:
+            width = pdf.w - pdf.l_margin - pdf.r_margin
+        width = max(width, 1)
+
+        start_y = pdf.get_y()
+        pdf.set_x(pdf.l_margin)
+        if sanitized:
+            pdf.multi_cell(width, 6, sanitized)
+        else:
+            pdf.ln(6)
+
+        used_height = pdf.get_y() - start_y
+        if used_height < 8:
+            pdf.ln(8 - used_height)
+
         self._set_body_font()
 
     def _write_body_line(
