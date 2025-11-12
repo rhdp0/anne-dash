@@ -967,12 +967,12 @@ if selected_section == "🔍 Consultórios":
                                         "Cirurgias solicitadas: %{customdata[2]}<extra></extra>"
                                     ),
                                 )
-                        fig.update_yaxes(
-                            categoryorder="array",
-                            categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                        consultorio_pdf_figures.setdefault(sala_label_pdf, []).append((title, fig))
+                            fig.update_yaxes(
+                                categoryorder="array",
+                                categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            consultorio_pdf_figures.setdefault(sala_label_pdf, []).append((title, fig))
 
                         with tabs_ind[0]:
                             _render_ind_highlights(top_total_ind)
