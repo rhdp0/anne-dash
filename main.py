@@ -1188,11 +1188,32 @@ else:
                 .reset_index()
             )
             if "Valor Aluguel Total" in consultorio_totais.columns:
+                soma_geral_aluguel = consultorio_totais["Valor Aluguel Total"].sum(
+                    min_count=1
+                )
+                if pd.notna(soma_geral_aluguel) and soma_geral_aluguel != 0:
+                    consultorio_totais["Participação do Aluguel (%)"] = (
+                        consultorio_totais["Valor Aluguel Total"]
+                        / soma_geral_aluguel
+                        * 100
+                    )
+                else:
+                    consultorio_totais["Participação do Aluguel (%)"] = pd.NA
+            if "Valor Aluguel Total" in consultorio_totais.columns:
                 consultorio_totais = consultorio_totais.sort_values(
                     ["Valor Aluguel Total", "Profissionais"],
                     ascending=[False, False],
                     na_position="last",
                 )
+
+            if "Valor Aluguel Total" in consultorio_medico_agg.columns:
+                share_map = consultorio_totais.set_index("Consultório").get(
+                    "Participação do Aluguel (%)"
+                )
+                if share_map is not None:
+                    consultorio_medico_agg["Participação do Aluguel (%)"] = (
+                        consultorio_medico_agg["Consultório"].map(share_map)
+                    )
 
 ranking_para_pdf = ranking_prod_total.copy()
 if not ranking_para_pdf.empty:
@@ -1566,6 +1587,11 @@ if selected_section == "💼 Planos & Aluguel":
                 if not consultorio_totais.empty and "Valor Aluguel Total" in consultorio_totais.columns:
                     consultorio_valores = consultorio_totais.dropna(subset=["Valor Aluguel Total"])
                     if not consultorio_valores.empty:
+                        if "Participação do Aluguel (%)" in consultorio_valores.columns:
+                            consultorio_valores = consultorio_valores.copy()
+                            consultorio_valores["Participação do Aluguel (%)"] = consultorio_valores[
+                                "Participação do Aluguel (%)"
+                            ].round(1)
                         fig_cons_valor = px.bar(
                             consultorio_valores,
                             x="Consultório",
@@ -1573,9 +1599,19 @@ if selected_section == "💼 Planos & Aluguel":
                             title="Valor total de aluguel por consultório",
                             text="Valor Aluguel Total",
                         )
+                        customdata_cols: List[str] = []
+                        if "Participação do Aluguel (%)" in consultorio_valores.columns:
+                            customdata_cols.append("Participação do Aluguel (%)")
                         fig_cons_valor.update_traces(
-                            texttemplate="R$ %{y:,.2f}",
+                            texttemplate=(
+                                "R$ %{y:,.2f}<br>%{customdata[0]:.1f}%"
+                                if customdata_cols
+                                else "R$ %{y:,.2f}"
+                            ),
                             textposition="outside",
+                            customdata=consultorio_valores[customdata_cols]
+                            if customdata_cols
+                            else None,
                         )
                         fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
                         st.plotly_chart(fig_cons_valor, use_container_width=True)
@@ -1608,6 +1644,7 @@ if selected_section == "💼 Planos & Aluguel":
                         "Médico",
                         "Profissionais",
                         "Valor Aluguel Total",
+                        "Participação do Aluguel (%)",
                     ]
                     if c in consultorio_medico_agg.columns
                 ]
