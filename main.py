@@ -282,22 +282,27 @@ fdf = filtered_df[mask_base & mask_medico].copy()
 ranking_prod_total = pd.DataFrame()
 receita_por_medico = pd.DataFrame()
 receita_por_consultorio = pd.DataFrame()
+produtividade_base = pd.DataFrame()
 if not produtividade_df.empty:
-    base_prod = produtividade_df.copy()
-    base_prod["Especialidade"] = base_prod["Especialidade"].fillna("").astype(str).str.strip()
-    base_prod.loc[base_prod["Especialidade"].eq(""), "Especialidade"] = "Não informada"
+    produtividade_base = produtividade_df.copy()
+    produtividade_base["Especialidade"] = (
+        produtividade_base["Especialidade"].fillna("").astype(str).str.strip()
+    )
+    produtividade_base.loc[
+        produtividade_base["Especialidade"].eq(""), "Especialidade"
+    ] = "Não informada"
 
     agg_map = {
         "Exames Solicitados": "sum",
         "Cirurgias Solicitadas": "sum",
     }
-    if "CRM" in base_prod.columns:
+    if "CRM" in produtividade_base.columns:
         agg_map["CRM"] = first_nonempty
-    if "Receita" in base_prod.columns:
+    if "Receita" in produtividade_base.columns:
         agg_map["Receita"] = "sum"
 
     ranking_prod_total = data_facade.group_metrics(
-        base_prod,
+        produtividade_base,
         ["Consultório", "Especialidade", "Profissional"],
         agg_map,
     )
@@ -1446,6 +1451,112 @@ if selected_section == "💼 Planos & Aluguel":
             else:
                 cpd.metric("Valor total de aluguel (R$)", "—")
                 cpe.metric("Valor médio de aluguel (R$)", "—")
+
+            st.markdown("#### Receita ao longo do tempo (produtividade)")
+            if produtividade_base.empty or "Receita" not in produtividade_base.columns:
+                st.info(
+                    "Sem dados de produtividade com valores de receita para gerar a linha do tempo financeira."
+                )
+            else:
+                receita_timeline = produtividade_base.copy()
+                receita_timeline["Receita"] = pd.to_numeric(
+                    receita_timeline["Receita"], errors="coerce"
+                ).fillna(0)
+
+                if sel_salas and "Consultório" in receita_timeline.columns:
+                    receita_timeline = receita_timeline[
+                        receita_timeline["Consultório"].isin(sel_salas)
+                    ]
+
+                if "Data" in receita_timeline.columns:
+                    receita_timeline["Data"] = pd.to_datetime(
+                        receita_timeline["Data"], errors="coerce"
+                    )
+                    receita_timeline["PeríodoData"] = (
+                        receita_timeline["Data"].dt.to_period("M").dt.to_timestamp()
+                    )
+                elif "Período" in receita_timeline.columns:
+                    receita_timeline["PeríodoData"] = pd.to_datetime(
+                        receita_timeline["Período"], errors="coerce"
+                    ).dt.to_period("M").dt.to_timestamp()
+                else:
+                    receita_timeline["PeríodoData"] = pd.NaT
+
+                receita_timeline = receita_timeline.dropna(subset=["PeríodoData"])
+                if receita_timeline.empty:
+                    st.info(
+                        "Inclua datas ou períodos nas abas de produtividade para visualizar a evolução da receita."
+                    )
+                else:
+                    receita_timeline["Ano"] = receita_timeline["PeríodoData"].dt.year
+                    anos_disponiveis = (
+                        receita_timeline["Ano"].dropna().unique().astype(int).tolist()
+                    )
+                    anos_disponiveis.sort()
+                    default_anos = [
+                        ano for ano in [2025, 2026] if ano in anos_disponiveis
+                    ] or anos_disponiveis
+
+                    anos_selecionados = st.multiselect(
+                        "Ano(s) para a linha do tempo",
+                        anos_disponiveis,
+                        default=default_anos,
+                        help="Filtra a linha do tempo de receita para 2025 ou 2026.",
+                    )
+
+                    if anos_selecionados:
+                        receita_timeline = receita_timeline[
+                            receita_timeline["Ano"].isin(anos_selecionados)
+                        ]
+
+                    if receita_timeline.empty:
+                        st.info("Nenhum registro de receita para os anos selecionados.")
+                    else:
+                        group_cols = ["PeríodoData"]
+                        if "Consultório" in receita_timeline.columns:
+                            group_cols.append("Consultório")
+
+                        receita_agg = (
+                            receita_timeline.groupby(group_cols)["Receita"]
+                            .sum()
+                            .reset_index()
+                        )
+                        receita_agg = receita_agg.sort_values("PeríodoData")
+                        receita_agg["Período"] = receita_agg["PeríodoData"].dt.strftime(
+                            "%b/%Y"
+                        )
+
+                        if "Consultório" in receita_agg.columns:
+                            fig_receita = px.bar(
+                                receita_agg,
+                                x="Período",
+                                y="Receita",
+                                color="Consultório",
+                                barmode="stack",
+                                title="Receita por período (soma da produtividade)",
+                                labels={
+                                    "Receita": "Receita (R$)",
+                                    "Período": "Mês/Ano",
+                                },
+                            )
+                        else:
+                            fig_receita = px.line(
+                                receita_agg,
+                                x="Período",
+                                y="Receita",
+                                markers=True,
+                                title="Receita por período (soma da produtividade)",
+                                labels={
+                                    "Receita": "Receita (R$)",
+                                    "Período": "Mês/Ano",
+                                },
+                            )
+
+                        fig_receita.update_yaxes(tickprefix="R$ ")
+                        st.plotly_chart(fig_receita, use_container_width=True)
+                        planos_pdf_figures.append(
+                            ("Receita por período (produtividade)", fig_receita)
+                        )
 
             g1, g2 = st.columns(2)
             with g1:

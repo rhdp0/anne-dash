@@ -162,6 +162,8 @@ def load_produtividade_from_workbook(excel: pd.ExcelFile) -> pd.DataFrame:
                     or "fatur" in norm
                 ):
                     rename[col] = "Receita"
+                elif any(key in norm for key in ["data", "period", "período", "mes", "mês", "compet"]):
+                    rename[col] = "Data"
                 elif "consult" in norm and "produtiv" not in norm:
                     rename[col] = "Consultório"
 
@@ -185,6 +187,7 @@ def load_produtividade_from_workbook(excel: pd.ExcelFile) -> pd.DataFrame:
                     "Cirurgias Solicitadas",
                     "Receita",
                     "Consultório",
+                    "Data",
                 ]
                 if col in dfp.columns
             ]
@@ -223,6 +226,13 @@ def load_produtividade_from_workbook(excel: pd.ExcelFile) -> pd.DataFrame:
 
             if "CRM" in dfp.columns:
                 dfp["CRM"] = dfp["CRM"].astype(str).str.strip()
+
+            if "Data" in dfp.columns:
+                dfp["Data"] = pd.to_datetime(dfp["Data"], errors="coerce")
+                dfp["Período"] = dfp["Data"].dt.to_period("M").astype(str)
+                dfp.loc[dfp["Data"].isna(), "Período"] = ""
+            else:
+                dfp["Período"] = ""
 
             for col in ["Exames Solicitados", "Cirurgias Solicitadas", "Receita"]:
                 if col in dfp.columns:
