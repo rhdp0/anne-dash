@@ -370,6 +370,25 @@ overview_timeseries = {
     "por_dia": occupancy_service.build_timeseries(["Dia"]),
     "por_turno": occupancy_service.build_timeseries(["Turno"]),
 }
+
+heatmap_dimension = None
+for candidate in ["Horário", "Horario", "Turno"]:
+    if candidate in fdf.columns:
+        heatmap_dimension = candidate
+        break
+
+heatmap_source = pd.DataFrame()
+if heatmap_dimension is not None and not fdf.empty and "Ocupado" in fdf.columns:
+    heatmap_source = (
+        fdf.groupby(["Dia", heatmap_dimension], observed=False)["Ocupado"]
+        .agg(Slots_Ocupados=lambda s: int(s.fillna(False).astype(bool).sum()), Total_Slots="size")
+        .reset_index()
+    )
+    heatmap_source["Taxa de Ocupação (%)"] = (
+        heatmap_source["Slots Ocupados"] / heatmap_source["Total Slots"] * 100
+    ).round(1)
+    heatmap_source["Slots Ocupados"] = heatmap_source["Slots Ocupados"].astype(int)
+    heatmap_source["Total Slots"] = heatmap_source["Total Slots"].astype(int)
 top_medicos_turnos = occupancy_service.top_medicos_por_turnos(15)
 kpis = occupancy_service.get_kpi_summary()
 summary_metrics = occupancy_service.build_summary_metadata()
@@ -455,6 +474,49 @@ if selected_section == "📊 Visão Geral":
             overview_pdf_figures.append(("Top médicos por turnos utilizados", fig4))
         else:
             colD.info("Sem médicos ocupando slots nos filtros atuais.")
+
+        st.markdown("##### Ocupação por dia × turno/horário")
+        if heatmap_dimension is None:
+            st.info("Inclua uma coluna de turno ou horário na agenda para gerar o mapa de ocupação.")
+        elif heatmap_source.empty:
+            st.info("Sem dados suficientes para montar a tabela dinâmica nos filtros atuais.")
+        else:
+            metric_options = ["Taxa de Ocupação (%)", "Slots Ocupados", "Total Slots"]
+            heatmap_metric = st.radio(
+                "Métrica exibida",
+                metric_options,
+                horizontal=True,
+                key="heatmap_metric_overview",
+            )
+
+            heatmap_pivot = heatmap_source.pivot(
+                index="Dia", columns=heatmap_dimension, values=heatmap_metric
+            )
+            if "Dia" in fdf.columns and pd.api.types.is_categorical_dtype(fdf["Dia"]):
+                ordered_days = [day for day in fdf["Dia"].cat.categories if day in heatmap_pivot.index]
+                heatmap_pivot = heatmap_pivot.loc[ordered_days]
+
+            is_percentage = "Taxa" in heatmap_metric
+            color_scale = [[0, "#e3f2fd"], [0.35, "#bbdefb"], [0.7, "#64b5f6"], [1, "#1b3b5f"]]
+            fig_heatmap = px.imshow(
+                heatmap_pivot,
+                text_auto=".1f" if is_percentage else True,
+                aspect="auto",
+                color_continuous_scale=color_scale,
+                zmin=0,
+                zmax=100 if is_percentage else None,
+                labels={"color": heatmap_metric, "x": heatmap_dimension, "y": "Dia"},
+                title="Mapa de ocupação dos slots",
+            )
+            fig_heatmap.update_layout(
+                margin=dict(t=60, r=20, l=20, b=20), coloraxis_colorbar=dict(title="Ocupação")
+            )
+            fig_heatmap.update_traces(hovertemplate="Dia: %{y}<br>" + f"{heatmap_dimension}: %{x}<br>" + "Valor: %{z}<extra></extra>")
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+            st.caption(
+                "Células mais claras destacam horários ociosos ou com menos slots ocupados conforme a métrica escolhida."
+            )
 
 
 if selected_section == "🏆 Ranking":
