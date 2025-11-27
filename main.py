@@ -392,8 +392,10 @@ if heatmap_dimension is not None and not fdf.empty and "Ocupado" in fdf.columns:
     heatmap_source["Taxa de Ocupação (%)"] = (
         heatmap_source["Slots Ocupados"] / heatmap_source["Total Slots"] * 100
     ).round(1)
-    heatmap_source["Slots Ocupados"] = heatmap_source["Slots Ocupados"].astype(int)
-    heatmap_source["Total Slots"] = heatmap_source["Total Slots"].astype(int)
+    heatmap_source["Slots Ocupados"] = (
+        heatmap_source["Slots Ocupados"].fillna(0).astype(int)
+    )
+    heatmap_source["Total Slots"] = heatmap_source["Total Slots"].fillna(0).astype(int)
 top_medicos_turnos = occupancy_service.top_medicos_por_turnos(15)
 kpis = occupancy_service.get_kpi_summary()
 summary_metrics = occupancy_service.build_summary_metadata()
