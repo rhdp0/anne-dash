@@ -381,7 +381,12 @@ heatmap_source = pd.DataFrame()
 if heatmap_dimension is not None and not fdf.empty and "Ocupado" in fdf.columns:
     heatmap_source = (
         fdf.groupby(["Dia", heatmap_dimension], observed=False)["Ocupado"]
-        .agg(Slots_Ocupados=lambda s: int(s.fillna(False).astype(bool).sum()), Total_Slots="size")
+        .agg(
+            **{
+                "Slots Ocupados": lambda s: int(s.fillna(False).astype(bool).sum()),
+                "Total Slots": "size",
+            }
+        )
         .reset_index()
     )
     heatmap_source["Taxa de Ocupação (%)"] = (
