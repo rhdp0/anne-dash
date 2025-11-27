@@ -380,7 +380,7 @@ for candidate in ["Horário", "Horario", "Turno"]:
 heatmap_source = pd.DataFrame()
 if heatmap_dimension is not None and not fdf.empty and "Ocupado" in fdf.columns:
     heatmap_source = (
-        fdf.groupby(["Dia", heatmap_dimension], observed=False)["Ocupado"]
+        fdf.groupby(["Sala", "Dia", heatmap_dimension], observed=False)["Ocupado"]
         .agg(
             **{
                 "Slots Ocupados": lambda s: int(s.fillna(False).astype(bool).sum()),
@@ -496,32 +496,65 @@ if selected_section == "📊 Visão Geral":
                 key="heatmap_metric_overview",
             )
 
-            heatmap_pivot = heatmap_source.pivot(
-                index="Dia", columns=heatmap_dimension, values=heatmap_metric
-            )
+            ordered_days: Optional[List[str]] = None
             if "Dia" in fdf.columns and isinstance(fdf["Dia"].dtype, pd.CategoricalDtype):
-                ordered_days = [day for day in fdf["Dia"].cat.categories if day in heatmap_pivot.index]
-                heatmap_pivot = heatmap_pivot.loc[ordered_days]
+                ordered_days = [day for day in fdf["Dia"].cat.categories if day in heatmap_source["Dia"].unique()]
 
-            is_percentage = "Taxa" in heatmap_metric
-            color_scale = [[0, "#e3f2fd"], [0.35, "#bbdefb"], [0.7, "#64b5f6"], [1, "#1b3b5f"]]
-            fig_heatmap = px.imshow(
-                heatmap_pivot,
-                text_auto=".1f" if is_percentage else True,
-                aspect="auto",
-                color_continuous_scale=color_scale,
-                zmin=0,
-                zmax=100 if is_percentage else None,
-                labels={"color": heatmap_metric, "x": heatmap_dimension, "y": "Dia"},
-                title="Mapa de ocupação dos slots",
-            )
-            fig_heatmap.update_layout(
-                margin=dict(t=60, r=20, l=20, b=20), coloraxis_colorbar=dict(title="Ocupação")
-            )
-            fig_heatmap.update_traces(
-                hovertemplate="Dia: %{y}<br>" + f"{heatmap_dimension}: %{{x}}<br>" + "Valor: %{{z}}<extra></extra>"
-            )
-            st.plotly_chart(fig_heatmap, width="stretch")
+            salas_heatmap = [
+                sala
+                for sala in sel_salas
+                if sala in heatmap_source["Sala"].dropna().unique().tolist()
+            ]
+
+            if not salas_heatmap:
+                st.info("Nenhuma sala elegível para o mapa de ocupação nos filtros atuais.")
+            else:
+                tab_labels = [format_consultorio_label(s) for s in salas_heatmap]
+                tab_containers = st.tabs(tab_labels)
+
+                is_percentage = "Taxa" in heatmap_metric
+                color_scale = [[0, "#e3f2fd"], [0.35, "#bbdefb"], [0.7, "#64b5f6"], [1, "#1b3b5f"]]
+
+                for tab, sala in zip(tab_containers, salas_heatmap):
+                    with tab:
+                        sala_data = heatmap_source[heatmap_source["Sala"].eq(sala)]
+                        heatmap_pivot = sala_data.pivot(
+                            index="Dia", columns=heatmap_dimension, values=heatmap_metric
+                        )
+
+                        if heatmap_pivot.empty:
+                            st.info("Sem registros suficientes para exibir o mapa nesta sala.")
+                            continue
+
+                        if ordered_days:
+                            heatmap_pivot = heatmap_pivot.loc[
+                                [day for day in ordered_days if day in heatmap_pivot.index]
+                            ]
+
+                        fig_heatmap = px.imshow(
+                            heatmap_pivot,
+                            text_auto=".1f" if is_percentage else True,
+                            aspect="auto",
+                            color_continuous_scale=color_scale,
+                            zmin=0,
+                            zmax=100 if is_percentage else None,
+                            labels={
+                                "color": heatmap_metric,
+                                "x": heatmap_dimension,
+                                "y": "Dia",
+                            },
+                            title=f"Mapa de ocupação dos slots — {format_consultorio_label(sala)}",
+                        )
+                        fig_heatmap.update_layout(
+                            margin=dict(t=60, r=20, l=20, b=20),
+                            coloraxis_colorbar=dict(title="Ocupação"),
+                        )
+                        fig_heatmap.update_traces(
+                            hovertemplate="Dia: %{y}<br>"
+                            + f"{heatmap_dimension}: %{{x}}<br>"
+                            + "Valor: %{{z}}<extra></extra>"
+                        )
+                        st.plotly_chart(fig_heatmap, width="stretch")
 
             st.caption(
                 "Células mais claras destacam horários ociosos ou com menos slots ocupados conforme a métrica escolhida."
