@@ -280,7 +280,8 @@ else:
 fdf = filtered_df[mask_base & mask_medico].copy()
 
 ranking_prod_total = pd.DataFrame()
-receita_por_medico = pd.DataFrame()
+receita_por_medico_total = pd.DataFrame()
+receita_por_medico_consultorio = pd.DataFrame()
 receita_por_consultorio = pd.DataFrame()
 produtividade_base = pd.DataFrame()
 if not produtividade_df.empty:
@@ -344,8 +345,17 @@ if not produtividade_df.empty:
         axis=1,
     )
 
-    receita_por_medico = (
+    receita_por_medico_total = (
         ranking_prod_total.groupby("Profissional", as_index=False)["Receita"].sum()
+        .rename(columns={"Receita": "Receita Total"})
+        .sort_values("Receita Total", ascending=False)
+    )
+
+    receita_por_medico_consultorio = (
+        ranking_prod_total.groupby(["Consultório", "Profissional"], as_index=False)[
+            "Receita"
+        ]
+        .sum()
         .rename(columns={"Receita": "Receita Total"})
         .sort_values("Receita Total", ascending=False)
     )
@@ -599,11 +609,13 @@ if selected_section == "🏆 Ranking":
                     format_currency_value(receita_total) if receita_total else "—",
                 )
 
-                receita_medico_consultorio = receita_por_medico
                 receita_consultorio_apenas = receita_por_consultorio
+                receita_medico_consultorio = receita_por_medico_total
                 if consultorio_escolhido != "Todos os consultórios":
-                    receita_medico_consultorio = receita_por_medico[
-                        receita_por_medico["Consultório"].eq(consultorio_escolhido)
+                    receita_medico_consultorio = receita_por_medico_consultorio[
+                        receita_por_medico_consultorio["Consultório"].eq(
+                            consultorio_escolhido
+                        )
                     ]
                     receita_consultorio_apenas = receita_por_consultorio[
                         receita_por_consultorio["Consultório"].eq(consultorio_escolhido)
