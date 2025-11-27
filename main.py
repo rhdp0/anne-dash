@@ -436,7 +436,7 @@ if selected_section == "📊 Visão Geral":
         )
         fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
         fig1.update_yaxes(range=[0, 100])
-        colA.plotly_chart(fig1, use_container_width=True)
+        colA.plotly_chart(fig1, width="stretch")
         overview_pdf_figures.append(("Ocupação por consultório", fig1))
 
         by_dia = overview_timeseries.get("por_dia", pd.DataFrame())
@@ -449,7 +449,7 @@ if selected_section == "📊 Visão Geral":
         )
         fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
         fig2.update_yaxes(range=[0, 100])
-        colB.plotly_chart(fig2, use_container_width=True)
+        colB.plotly_chart(fig2, width="stretch")
         overview_pdf_figures.append(("Ocupação por dia da semana", fig2))
 
         colC, colD = sec.columns(2)
@@ -463,7 +463,7 @@ if selected_section == "📊 Visão Geral":
         )
         fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
         fig3.update_yaxes(range=[0, 100])
-        colC.plotly_chart(fig3, use_container_width=True)
+        colC.plotly_chart(fig3, width="stretch")
         overview_pdf_figures.append(("Ocupação por turno", fig3))
 
         top_med = top_medicos_turnos
@@ -477,7 +477,7 @@ if selected_section == "📊 Visão Geral":
                 text="Turnos Utilizados",
             )
             fig4.update_traces(textposition="outside")
-            colD.plotly_chart(fig4, use_container_width=True)
+            colD.plotly_chart(fig4, width="stretch")
             overview_pdf_figures.append(("Top médicos por turnos utilizados", fig4))
         else:
             colD.info("Sem médicos ocupando slots nos filtros atuais.")
@@ -521,7 +521,7 @@ if selected_section == "📊 Visão Geral":
             fig_heatmap.update_traces(
                 hovertemplate="Dia: %{y}<br>" + f"{heatmap_dimension}: %{{x}}<br>" + "Valor: %{{z}}<extra></extra>"
             )
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+            st.plotly_chart(fig_heatmap, width="stretch")
 
             st.caption(
                 "Células mais claras destacam horários ociosos ou com menos slots ocupados conforme a métrica escolhida."
@@ -712,7 +712,7 @@ if selected_section == "🏆 Ranking":
                         categoryorder="array",
                         categoryarray=display_df[label_col].tolist()[::-1],
                     )
-                    container.plotly_chart(fig, use_container_width=True)
+                    container.plotly_chart(fig, width="stretch")
                     ranking_pdf_figures.append((title, fig))
 
                 with tab_total:
@@ -780,7 +780,7 @@ if selected_section == "🏆 Ranking":
                             categoryorder="array",
                             categoryarray=consult_display["Consultório"].tolist()[::-1],
                         )
-                        graf_receita_consult.plotly_chart(fig_receita_consult, use_container_width=True)
+                        graf_receita_consult.plotly_chart(fig_receita_consult, width="stretch")
                         ranking_pdf_figures.append(("Top consultórios por receita", fig_receita_consult))
                     else:
                         graf_receita_consult.info("Sem dados de receita por consultório.")
@@ -803,7 +803,7 @@ if selected_section == "🏆 Ranking":
                             categoryorder="array",
                             categoryarray=med_display["Profissional"].tolist()[::-1],
                         )
-                        graf_receita_medico.plotly_chart(fig_receita_medico, use_container_width=True)
+                        graf_receita_medico.plotly_chart(fig_receita_medico, width="stretch")
                         ranking_pdf_figures.append(("Top médicos por receita consolidada", fig_receita_medico))
                     else:
                         graf_receita_medico.info("Sem dados de receita por médico consolidada.")
@@ -1047,7 +1047,7 @@ if selected_section == "🔍 Consultórios":
                                 categoryorder="array",
                                 categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
                             consultorio_pdf_figures.setdefault(sala_label_pdf, []).append((title, fig))
 
                         with tabs_ind[0]:
@@ -1091,7 +1091,7 @@ if selected_section == "🔍 Consultórios":
                                          title=f"Ocupação por dia - {sala_detalhe}", text="Taxa de Ocupação (%)")
                     fig_ind_dia.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
                     fig_ind_dia.update_yaxes(range=[0, 100])
-                    st.plotly_chart(fig_ind_dia, use_container_width=True)
+                    st.plotly_chart(fig_ind_dia, width="stretch")
                     consultorio_pdf_figures.setdefault(sala_label_pdf, []).append(
                         (
                             fig_ind_dia.layout.title.text
@@ -1107,7 +1107,7 @@ if selected_section == "🔍 Consultórios":
                                            title=f"Ocupação por turno - {sala_detalhe}", text="Taxa de Ocupação (%)")
                     fig_ind_turno.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
                     fig_ind_turno.update_yaxes(range=[0, 100])
-                    st.plotly_chart(fig_ind_turno, use_container_width=True)
+                    st.plotly_chart(fig_ind_turno, width="stretch")
                     consultorio_pdf_figures.setdefault(sala_label_pdf, []).append(
                         (
                             fig_ind_turno.layout.title.text
@@ -1145,7 +1145,7 @@ if selected_section == "🔍 Consultórios":
                     )
                     st.plotly_chart(
                         fig_top_ind,
-                        use_container_width=True,
+                        width="stretch",
                         key=f"consultorio_prod_{sala_norm}",
                     )
                     consultorio_pdf_figures.setdefault(sala_label_pdf, []).append(
@@ -1184,7 +1184,7 @@ if selected_section == "🔍 Consultórios":
                     )
                     st.plotly_chart(
                         fig_top_receita,
-                        use_container_width=True,
+                        width="stretch",
                         key=f"consultorio_receita_{sala_norm}",
                     )
                     consultorio_pdf_figures.setdefault(sala_label_pdf, []).append(
@@ -1624,7 +1624,7 @@ if selected_section == "💼 Planos & Aluguel":
                             )
 
                         fig_receita.update_yaxes(tickprefix="R$ ")
-                        st.plotly_chart(fig_receita, use_container_width=True)
+                        st.plotly_chart(fig_receita, width="stretch")
                         planos_pdf_figures.append(
                             ("Receita por período (produtividade)", fig_receita)
                         )
@@ -1635,7 +1635,7 @@ if selected_section == "💼 Planos & Aluguel":
                     cont = med_enriched.groupby("Planos")["Médico"].nunique().reset_index(name="Profissionais")
                     fig7 = px.bar(cont, x="Planos", y="Profissionais", title="Profissionais por PLANOS", text="Profissionais")
                     fig7.update_traces(textposition="outside")
-                    st.plotly_chart(fig7, use_container_width=True)
+                    st.plotly_chart(fig7, width="stretch")
                     planos_pdf_figures.append(("Profissionais por PLANOS", fig7))
                 else:
                     st.info("Coluna PLANOS não encontrada.")
@@ -1646,7 +1646,7 @@ if selected_section == "💼 Planos & Aluguel":
                     avgv["Valor médio (R$)"] = avgv["Valor médio (R$)"].round(2)
                     fig8 = px.bar(avgv, x="Planos", y="Valor médio (R$)", title="Valor médio de aluguel por PLANOS", text="Valor médio (R$)")
                     fig8.update_traces(texttemplate="R$ %{y:.2f}", textposition="outside")
-                    st.plotly_chart(fig8, use_container_width=True)
+                    st.plotly_chart(fig8, width="stretch")
                     planos_pdf_figures.append(("Valor médio de aluguel por PLANOS", fig8))
                 else:
                     st.info("Inclua as colunas PLANOS e Valor Aluguel.")
@@ -1660,7 +1660,7 @@ if selected_section == "💼 Planos & Aluguel":
                 fig9 = px.bar(dist, x="Faixa Aluguel", y="Profissionais", color="Planos", barmode="group",
                               title="Profissionais por faixa de aluguel × PLANOS", text="Profissionais")
                 fig9.update_traces(textposition="outside")
-                st.plotly_chart(fig9, use_container_width=True)
+                st.plotly_chart(fig9, width="stretch")
                 planos_pdf_figures.append(("Profissionais por faixa de aluguel × PLANOS", fig9))
 
             if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
@@ -1674,7 +1674,7 @@ if selected_section == "💼 Planos & Aluguel":
                     text="Valor médio (R$)",
                 )
                 fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
-                st.plotly_chart(fig10, use_container_width=True)
+                st.plotly_chart(fig10, width="stretch")
                 planos_pdf_figures.append(("Valor médio de aluguel por especialidade", fig10))
             else:
                 st.info("Inclua 'Especialidade' e 'Valor Aluguel'.")
@@ -1691,7 +1691,7 @@ if selected_section == "💼 Planos & Aluguel":
                     text="Profissionais",
                 )
                 fig11.update_traces(textposition="outside")
-                st.plotly_chart(fig11, use_container_width=True)
+                st.plotly_chart(fig11, width="stretch")
                 planos_pdf_figures.append(("Profissionais por especialidade × PLANOS", fig11))
             else:
                 st.info("Inclua 'Especialidade' e 'PLANOS'.")
@@ -1737,7 +1737,7 @@ if selected_section == "💼 Planos & Aluguel":
                                     yaxis_title="Profissionais",
                                     showlegend=False,
                                 )
-                                st.plotly_chart(fig_cons_planos, use_container_width=True)
+                                st.plotly_chart(fig_cons_planos, width="stretch")
                                 planos_pdf_figures.append(
                                     (
                                         fig_cons_planos.layout.title.text
@@ -1758,7 +1758,7 @@ if selected_section == "💼 Planos & Aluguel":
                         .reset_index()
                     )
                     pivot_planos = pivot_planos.sort_values("Consultório")
-                    st.dataframe(pivot_planos, use_container_width=True)
+                    st.dataframe(pivot_planos, width="stretch")
             else:
                 st.info(
                     "Inclua 'Consultório', 'Planos' e 'Médico' para visualizar a distribuição de convênios por consultório."
@@ -1796,7 +1796,7 @@ if selected_section == "💼 Planos & Aluguel":
                             else None,
                         )
                         fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
-                        st.plotly_chart(fig_cons_valor, use_container_width=True)
+                        st.plotly_chart(fig_cons_valor, width="stretch")
                         planos_pdf_figures.append(("Valor total de aluguel por consultório", fig_cons_valor))
                     else:
                         st.info("Nenhum valor de aluguel informado para os consultórios listados.")
@@ -1812,7 +1812,7 @@ if selected_section == "💼 Planos & Aluguel":
                         text="Profissionais",
                     )
                     fig_cons_prof.update_traces(textposition="outside")
-                    st.plotly_chart(fig_cons_prof, use_container_width=True)
+                    st.plotly_chart(fig_cons_prof, width="stretch")
                     planos_pdf_figures.append(("Profissionais por consultório", fig_cons_prof))
                 else:
                     st.info("Inclua 'Consultório' para visualizar a distribuição de profissionais.")
@@ -1834,7 +1834,7 @@ if selected_section == "💼 Planos & Aluguel":
                     consultorio_medico_agg[display_cols].sort_values(
                         ["Consultório", "Médico"], na_position="last"
                     ),
-                    use_container_width=True,
+                    width="stretch",
                 )
 
             g5, g6 = st.columns(2)
@@ -1851,7 +1851,7 @@ if selected_section == "💼 Planos & Aluguel":
                         dist_ts = ts.groupby("Tipo de Sala")["Médico"].nunique().reset_index(name="Profissionais")
                         fig12 = px.bar(dist_ts, x="Tipo de Sala", y="Profissionais", title="Profissionais por tipo de sala", text="Profissionais")
                         fig12.update_traces(textposition="outside")
-                        st.plotly_chart(fig12, use_container_width=True)
+                        st.plotly_chart(fig12, width="stretch")
                         planos_pdf_figures.append(("Profissionais por tipo de sala", fig12))
                     else:
                         st.info("Sem marcações de sala exclusiva/dividida para analisar.")
@@ -1881,7 +1881,7 @@ if selected_section == "💼 Planos & Aluguel":
             ]
             st.dataframe(
                 med_enriched[cols_show].sort_values(sort_cols, na_position="last") if sort_cols else med_enriched[cols_show],
-                use_container_width=True,
+                width="stretch",
             )
 
 if selected_section == "📋 Agenda":
@@ -1895,7 +1895,7 @@ if selected_section == "📋 Agenda":
             fdf.sort_values(["Sala", "Dia", "Turno"]).reset_index(drop=True)[
                 ["Sala", "Dia", "Turno", "Médico"]
             ],
-            use_container_width=True,
+            width="stretch",
         )
 
         csv = fdf.to_csv(index=False).encode("utf-8-sig")
