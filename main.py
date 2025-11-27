@@ -499,7 +499,7 @@ if selected_section == "📊 Visão Geral":
             heatmap_pivot = heatmap_source.pivot(
                 index="Dia", columns=heatmap_dimension, values=heatmap_metric
             )
-            if "Dia" in fdf.columns and pd.api.types.is_categorical_dtype(fdf["Dia"]):
+            if "Dia" in fdf.columns and isinstance(fdf["Dia"].dtype, pd.CategoricalDtype):
                 ordered_days = [day for day in fdf["Dia"].cat.categories if day in heatmap_pivot.index]
                 heatmap_pivot = heatmap_pivot.loc[ordered_days]
 
