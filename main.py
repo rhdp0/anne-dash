@@ -835,6 +835,14 @@ if selected_section == "🏆 Ranking":
                             is_currency=True,
                         )
 
+                receita_por_medico = receita_por_medico_total
+                if consultorio_escolhido != "Todos os consultórios":
+                    receita_por_medico = receita_por_medico_consultorio[
+                        receita_por_medico_consultorio["Consultório"].eq(
+                            consultorio_escolhido
+                        )
+                    ]
+
                 if not receita_por_consultorio.empty or not receita_por_medico.empty:
                     sec.markdown("#### Distribuição de receita consolidada")
                     graf_receita_consult, graf_receita_medico = sec.columns(2)
