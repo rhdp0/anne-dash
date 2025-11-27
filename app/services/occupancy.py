@@ -179,7 +179,9 @@ class OccupancyAnalyzer:
 
         group_cols = list(group_by)
         grouped = (
-            self.base_df.groupby(group_cols)["Ocupado"].agg(["sum", "count"]).reset_index()
+            self.base_df.groupby(group_cols, observed=False)["Ocupado"]
+            .agg(["sum", "count"])
+            .reset_index()
         )
         grouped.rename(columns={"sum": "Slots Ocupados", "count": "Total Slots"}, inplace=True)
         grouped["Taxa de Ocupação (%)"] = (
