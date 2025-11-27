@@ -518,7 +518,9 @@ if selected_section == "📊 Visão Geral":
             fig_heatmap.update_layout(
                 margin=dict(t=60, r=20, l=20, b=20), coloraxis_colorbar=dict(title="Ocupação")
             )
-            fig_heatmap.update_traces(hovertemplate="Dia: %{y}<br>" + f"{heatmap_dimension}: %{x}<br>" + "Valor: %{z}<extra></extra>")
+            fig_heatmap.update_traces(
+                hovertemplate="Dia: %{y}<br>" + f"{heatmap_dimension}: %{{x}}<br>" + "Valor: %{{z}}<extra></extra>"
+            )
             st.plotly_chart(fig_heatmap, use_container_width=True)
 
             st.caption(
