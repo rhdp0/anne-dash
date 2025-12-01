@@ -1,6 +1,6 @@
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from contextlib import contextmanager
 import numpy as np
 
@@ -230,6 +230,84 @@ def format_currency_value(value) -> str:
     formatted = f"R$ {numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return formatted
 
+
+def responsive_columns(container, desired_columns: int, single_column: bool = False):
+    columns_count = 1 if single_column else desired_columns
+    return container.columns(columns_count)
+
+
+def render_overview_charts(
+    sec,
+    cols: int,
+    overview_timeseries: Dict[str, pd.DataFrame],
+    top_medicos_turnos: pd.DataFrame,
+    overview_pdf_figures: List[Tuple[str, object]],
+):
+    columns_per_row = 1 if cols == 1 else 2
+
+    chart_renderers: List[Callable[[st.delta_generator.DeltaGenerator], None]] = []
+
+    by_sala = overview_timeseries.get("por_sala", pd.DataFrame())
+    fig1 = px.bar(
+        by_sala,
+        x="Sala",
+        y="Taxa de Ocupação (%)",
+        title="Ocupação por consultório",
+        text="Taxa de Ocupação (%)",
+    )
+    fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig1.update_yaxes(range=[0, 100])
+    chart_renderers.append(lambda col: col.plotly_chart(fig1, width="stretch"))
+    overview_pdf_figures.append(("Ocupação por consultório", fig1))
+
+    by_dia = overview_timeseries.get("por_dia", pd.DataFrame())
+    fig2 = px.bar(
+        by_dia,
+        x="Dia",
+        y="Taxa de Ocupação (%)",
+        title="Ocupação por dia da semana",
+        text="Taxa de Ocupação (%)",
+    )
+    fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig2.update_yaxes(range=[0, 100])
+    chart_renderers.append(lambda col: col.plotly_chart(fig2, width="stretch"))
+    overview_pdf_figures.append(("Ocupação por dia da semana", fig2))
+
+    by_turno = overview_timeseries.get("por_turno", pd.DataFrame())
+    fig3 = px.bar(
+        by_turno,
+        x="Turno",
+        y="Taxa de Ocupação (%)",
+        title="Ocupação por turno",
+        text="Taxa de Ocupação (%)",
+    )
+    fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig3.update_yaxes(range=[0, 100])
+    chart_renderers.append(lambda col: col.plotly_chart(fig3, width="stretch"))
+    overview_pdf_figures.append(("Ocupação por turno", fig3))
+
+    if not top_medicos_turnos.empty:
+        fig4 = px.bar(
+            top_medicos_turnos,
+            x="Turnos Utilizados",
+            y="Médico",
+            orientation="h",
+            title="Top médicos por turnos utilizados",
+            text="Turnos Utilizados",
+        )
+        fig4.update_traces(textposition="outside")
+        chart_renderers.append(lambda col: col.plotly_chart(fig4, width="stretch"))
+        overview_pdf_figures.append(("Top médicos por turnos utilizados", fig4))
+    else:
+        chart_renderers.append(
+            lambda col: col.info("Sem médicos ocupando slots nos filtros atuais.")
+        )
+
+    for idx in range(0, len(chart_renderers), columns_per_row):
+        row_columns = sec.columns(columns_per_row)
+        for col, renderer in zip(row_columns, chart_renderers[idx : idx + columns_per_row]):
+            renderer(col)
+
 # ---------- Filtros ----------
 st.sidebar.header("🔎 Filtros")
 salas = sorted(df["Sala"].dropna().unique().tolist())
@@ -241,6 +319,11 @@ sel_salas = st.sidebar.multiselect("Consultório(s)", salas, default=salas)
 sel_dias = st.sidebar.multiselect("Dia(s)", dias, default=dias)
 sel_turnos = st.sidebar.multiselect("Turno(s)", turnos, default=turnos)
 sel_medicos = st.sidebar.multiselect("Médico(s)", medicos, default=[], help="Deixe vazio para não filtrar por médico.")
+compact_layout = st.sidebar.toggle(
+    "Visualizar em tela pequena",
+    value=False,
+    help="Empilha gráficos e métricas para uma leitura confortável em telas menores.",
+)
 
 filtered_df = data_facade.filter_by_date(
     df,
@@ -425,72 +508,30 @@ if selected_section == "📊 Visão Geral":
         description="Resumo executivo dos consultórios e turnos filtrados.",
         anchor="visao-geral",
     ) as sec:
-        c1, c2, c3, c4 = sec.columns(4)
-        c1.metric("Consultórios selecionados", kpis.total_salas)
-        c2.metric("Slots (dia × turno × sala)", kpis.total_slots)
-        c3.metric("Slots livres", kpis.slots_livres)
-        c4.metric("Ocupados", kpis.slots_ocupados)
+        kpi_columns = responsive_columns(sec, 4, compact_layout)
+        kpi_targets = [
+            ("Consultórios selecionados", kpis.total_salas),
+            ("Slots (dia × turno × sala)", kpis.total_slots),
+            ("Slots livres", kpis.slots_livres),
+            ("Ocupados", kpis.slots_ocupados),
+        ]
+        for idx, (label, value) in enumerate(kpi_targets):
+            kpi_columns[min(idx, len(kpi_columns) - 1)].metric(label, value)
 
-        kc1, kc2 = sec.columns(2)
-        kc1.metric("Taxa de ocupação", f"{kpis.taxa_ocupacao:.1f}%")
-        kc2.metric("Médicos distintos", kpis.medicos_distintos)
-
-        colA, colB = sec.columns(2)
-        by_sala = overview_timeseries.get("por_sala", pd.DataFrame())
-        fig1 = px.bar(
-            by_sala,
-            x="Sala",
-            y="Taxa de Ocupação (%)",
-            title="Ocupação por consultório",
-            text="Taxa de Ocupação (%)",
+        secondary_kpis = responsive_columns(sec, 2, compact_layout)
+        secondary_kpis[0].metric("Taxa de ocupação", f"{kpis.taxa_ocupacao:.1f}%")
+        secondary_kpis[min(1, len(secondary_kpis) - 1)].metric(
+            "Médicos distintos", kpis.medicos_distintos
         )
-        fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig1.update_yaxes(range=[0, 100])
-        colA.plotly_chart(fig1, width="stretch")
-        overview_pdf_figures.append(("Ocupação por consultório", fig1))
 
-        by_dia = overview_timeseries.get("por_dia", pd.DataFrame())
-        fig2 = px.bar(
-            by_dia,
-            x="Dia",
-            y="Taxa de Ocupação (%)",
-            title="Ocupação por dia da semana",
-            text="Taxa de Ocupação (%)",
+        overview_columns = 1 if compact_layout else 2
+        render_overview_charts(
+            sec,
+            overview_columns,
+            overview_timeseries,
+            top_medicos_turnos,
+            overview_pdf_figures,
         )
-        fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig2.update_yaxes(range=[0, 100])
-        colB.plotly_chart(fig2, width="stretch")
-        overview_pdf_figures.append(("Ocupação por dia da semana", fig2))
-
-        colC, colD = sec.columns(2)
-        by_turno = overview_timeseries.get("por_turno", pd.DataFrame())
-        fig3 = px.bar(
-            by_turno,
-            x="Turno",
-            y="Taxa de Ocupação (%)",
-            title="Ocupação por turno",
-            text="Taxa de Ocupação (%)",
-        )
-        fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig3.update_yaxes(range=[0, 100])
-        colC.plotly_chart(fig3, width="stretch")
-        overview_pdf_figures.append(("Ocupação por turno", fig3))
-
-        top_med = top_medicos_turnos
-        if not top_med.empty:
-            fig4 = px.bar(
-                top_med,
-                x="Turnos Utilizados",
-                y="Médico",
-                orientation="h",
-                title="Top médicos por turnos utilizados",
-                text="Turnos Utilizados",
-            )
-            fig4.update_traces(textposition="outside")
-            colD.plotly_chart(fig4, width="stretch")
-            overview_pdf_figures.append(("Top médicos por turnos utilizados", fig4))
-        else:
-            colD.info("Sem médicos ocupando slots nos filtros atuais.")
 
         st.markdown("##### Ocupação por dia × turno/horário")
         if heatmap_dimension is None:
@@ -1101,12 +1142,18 @@ if selected_section == "🔍 Consultórios":
                                 st.info("Sem registros para os filtros atuais.")
                                 return
 
-                        display_df = dataset.sort_values(value_col, ascending=False).copy()
-                        display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
-                        if is_currency:
-                            display_df["__text"] = display_df[value_col].apply(format_currency_value)
-                        else:
-                                display_df[value_col] = display_df[value_col].round().astype(int)
+                            display_df = dataset.sort_values(value_col, ascending=False).copy()
+                            display_df[value_col] = pd.to_numeric(
+                                display_df[value_col], errors="coerce"
+                            ).fillna(0)
+                            if is_currency:
+                                display_df["__text"] = display_df[value_col].apply(
+                                    format_currency_value
+                                )
+                            else:
+                                display_df[value_col] = display_df[value_col].round().astype(
+                                    int
+                                )
                                 display_df["__text"] = display_df[value_col]
                             fig = px.bar(
                                 display_df,
@@ -1141,7 +1188,9 @@ if selected_section == "🔍 Consultórios":
                                 categoryarray=display_df["EtiquetaLocal"].tolist(),
                             )
                             st.plotly_chart(fig, width="stretch")
-                            consultorio_pdf_figures.setdefault(sala_label_pdf, []).append((title, fig))
+                            consultorio_pdf_figures.setdefault(sala_label_pdf, []).append(
+                                (title, fig)
+                            )
 
                         with tabs_ind[0]:
                             _render_ind_highlights(top_total_ind)
