@@ -245,7 +245,7 @@ def render_overview_charts(
 ):
     columns_per_row = 1 if cols == 1 else 2
 
-    chart_renderers: List[Callable[[st.delta_generator.DeltaGenerator], None]] = []
+    chart_renderers: List[Tuple[Callable[[st.delta_generator.DeltaGenerator], None], bool]] = []
 
     by_sala = overview_timeseries.get("por_sala", pd.DataFrame())
     fig1 = px.bar(
@@ -257,7 +257,7 @@ def render_overview_charts(
     )
     fig1.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
     fig1.update_yaxes(range=[0, 100])
-    chart_renderers.append(lambda col: col.plotly_chart(fig1, width="stretch"))
+    chart_renderers.append((lambda col: col.plotly_chart(fig1, width="stretch"), False))
     overview_pdf_figures.append(("Ocupação por consultório", fig1))
 
     by_dia = overview_timeseries.get("por_dia", pd.DataFrame())
@@ -270,7 +270,7 @@ def render_overview_charts(
     )
     fig2.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
     fig2.update_yaxes(range=[0, 100])
-    chart_renderers.append(lambda col: col.plotly_chart(fig2, width="stretch"))
+    chart_renderers.append((lambda col: col.plotly_chart(fig2, width="stretch"), False))
     overview_pdf_figures.append(("Ocupação por dia da semana", fig2))
 
     by_turno = overview_timeseries.get("por_turno", pd.DataFrame())
@@ -283,12 +283,15 @@ def render_overview_charts(
     )
     fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
     fig3.update_yaxes(range=[0, 100])
-    chart_renderers.append(lambda col: col.plotly_chart(fig3, width="stretch"))
+    chart_renderers.append((lambda col: col.plotly_chart(fig3, width="stretch"), False))
     overview_pdf_figures.append(("Ocupação por turno", fig3))
 
     if not top_medicos_turnos.empty:
+        top_medicos_display = top_medicos_turnos.sort_values(
+            "Turnos Utilizados", ascending=False
+        )
         fig4 = px.bar(
-            top_medicos_turnos,
+            top_medicos_display,
             x="Turnos Utilizados",
             y="Médico",
             orientation="h",
@@ -296,17 +299,43 @@ def render_overview_charts(
             text="Turnos Utilizados",
         )
         fig4.update_traces(textposition="outside")
-        chart_renderers.append(lambda col: col.plotly_chart(fig4, width="stretch"))
+        fig4.update_yaxes(
+            categoryorder="array",
+            categoryarray=top_medicos_display["Médico"].tolist(),
+        )
+        chart_renderers.append(
+            (lambda col: col.plotly_chart(fig4, width="stretch"), True)
+        )
         overview_pdf_figures.append(("Top médicos por turnos utilizados", fig4))
     else:
         chart_renderers.append(
-            lambda col: col.info("Sem médicos ocupando slots nos filtros atuais.")
+            (
+                lambda col: col.info("Sem médicos ocupando slots nos filtros atuais."),
+                True,
+            )
         )
 
-    for idx in range(0, len(chart_renderers), columns_per_row):
-        row_columns = sec.columns(columns_per_row)
-        for col, renderer in zip(row_columns, chart_renderers[idx : idx + columns_per_row]):
+    pending_renderers: List[Callable[[st.delta_generator.DeltaGenerator], None]] = []
+
+    def _flush_pending():
+        nonlocal pending_renderers
+        if not pending_renderers:
+            return
+        row_columns = sec.columns(len(pending_renderers))
+        for col, renderer in zip(row_columns, pending_renderers):
             renderer(col)
+        pending_renderers = []
+
+    for renderer, full_width in chart_renderers:
+        if full_width:
+            _flush_pending()
+            renderer(sec)
+        else:
+            pending_renderers.append(renderer)
+            if len(pending_renderers) == columns_per_row:
+                _flush_pending()
+
+    _flush_pending()
 
 # ---------- Filtros ----------
 st.sidebar.header("🔎 Filtros")
@@ -886,7 +915,8 @@ if selected_section == "🏆 Ranking":
 
                 if not receita_por_consultorio.empty or not receita_por_medico.empty:
                     sec.markdown("#### Distribuição de receita consolidada")
-                    graf_receita_consult, graf_receita_medico = sec.columns(2)
+                    graf_receita_consult = sec.container()
+                    graf_receita_medico = sec.container()
 
                     if not receita_por_consultorio.empty:
                         consult_display = (
@@ -1820,6 +1850,10 @@ if selected_section == "💼 Planos & Aluguel":
                     text="Valor médio (R$)",
                 )
                 fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
+                fig10.update_yaxes(
+                    categoryorder="array",
+                    categoryarray=esp_avg["Especialidade"].tolist(),
+                )
                 st.plotly_chart(fig10, width="stretch")
                 planos_pdf_figures.append(("Valor médio de aluguel por especialidade", fig10))
             else:
