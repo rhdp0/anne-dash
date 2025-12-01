@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from unidecode import unidecode
+
 import numpy as np
 import pandas as pd
 
@@ -13,6 +15,7 @@ __all__ = [
     "format_consultorio_label",
     "first_nonempty",
     "to_number",
+    "normalize_plano_value",
 ]
 
 
@@ -74,3 +77,15 @@ def format_consultorio_label(name: Any) -> str:
     label = re.sub(r"(?i)consult[óo]rio", "Consultório", label)
     label = re.sub(r"\s+", " ", label).strip(" -_:")
     return label or str(name).strip()
+
+
+def normalize_plano_value(value: Any, *, remove_accents: bool = True) -> str:
+    """Normalize plano/convênio names for consistent grouping."""
+
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if remove_accents:
+        text = unidecode(text)
+    return text.upper()

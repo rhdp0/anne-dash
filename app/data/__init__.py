@@ -11,6 +11,7 @@ from .processors import (
     first_nonempty,
     format_consultorio_label,
     normalize_column_name,
+    normalize_plano_value,
     to_number,
 )
 
@@ -24,5 +25,6 @@ __all__ = [
     "first_nonempty",
     "format_consultorio_label",
     "normalize_column_name",
+    "normalize_plano_value",
     "to_number",
 ]

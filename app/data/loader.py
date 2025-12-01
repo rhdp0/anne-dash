@@ -5,7 +5,12 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from .processors import format_consultorio_label, normalize_column_name, to_number
+from .processors import (
+    format_consultorio_label,
+    normalize_column_name,
+    normalize_plano_value,
+    to_number,
+)
 
 
 __all__ = [
@@ -354,6 +359,11 @@ def load_medicos_from_workbook(excel: pd.ExcelFile) -> pd.DataFrame:
         result["Especialidade"] = result["Especialidade"].astype(str).str.strip()
     if "Consultório" in result.columns:
         result["Consultório"] = result["Consultório"].apply(format_consultorio_label)
+    if "Planos" in result.columns:
+        result["Planos Original"] = result["Planos"].astype(str).str.strip()
+        result["Planos"] = (
+            result["Planos"].apply(normalize_plano_value).replace("", pd.NA)
+        )
     if "Valor Aluguel" in result.columns:
         result["Valor Aluguel"] = result["Valor Aluguel"].apply(to_number)
     return result

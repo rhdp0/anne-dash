@@ -13,6 +13,7 @@ from app.data import (
     first_nonempty,
     format_consultorio_label,
     normalize_column_name,
+    normalize_plano_value,
 )
 from app.export.pdf_builder import DashboardPDFBuilder
 from app.services import OccupancyAnalyzer
@@ -234,6 +235,11 @@ def format_currency_value(value) -> str:
 def responsive_columns(container, desired_columns: int, single_column: bool = False):
     columns_count = 1 if single_column else desired_columns
     return container.columns(columns_count)
+
+
+def normalized_planos(series: pd.Series) -> pd.Series:
+    planos_norm = series.apply(normalize_plano_value)
+    return planos_norm.replace("", "NAO INFORMADO").fillna("NAO INFORMADO")
 
 
 def render_overview_charts(
@@ -1386,6 +1392,9 @@ else:
     usos = fdf_base.groupby("Médico").size().reset_index(name="Turnos Utilizados")
     med_enriched = med_df.merge(usos, on="Médico", how="left")
 
+    if "Planos" in med_enriched.columns:
+        med_enriched["Planos"] = normalized_planos(med_enriched["Planos"])
+
     if "Consultório" in med_enriched.columns and "Médico" in med_enriched.columns:
         med_consult = med_enriched.copy()
         med_consult["Consultório"] = med_consult["Consultório"].apply(
@@ -1422,8 +1431,8 @@ else:
 
             if "Planos" in med_consult.columns:
                 consultorio_planos = med_consult.copy()
-                consultorio_planos["Planos"] = (
-                    consultorio_planos["Planos"].fillna("Não informado").astype(str).str.strip()
+                consultorio_planos["Planos"] = normalized_planos(
+                    consultorio_planos["Planos"]
                 )
                 consultorio_planos = (
                     consultorio_planos.groupby(["Consultório", "Planos"])["Médico"]
