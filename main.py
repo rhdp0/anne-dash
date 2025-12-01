@@ -1849,13 +1849,19 @@ if selected_section == "💼 Planos & Aluguel":
                 planos_pdf_figures.append(("Profissionais por faixa de aluguel × PLANOS", fig9))
 
             if "Especialidade" in med_enriched.columns and "Valor Aluguel" in med_enriched.columns:
-                esp_avg = med_enriched.groupby("Especialidade")["Valor Aluguel"].mean().reset_index(name="Valor médio (R$)").sort_values("Valor médio (R$)", ascending=False)
+                esp_avg = (
+                    med_enriched.groupby("Especialidade")["Valor Aluguel"]
+                    .mean()
+                    .reset_index(name="Valor médio (R$)")
+                    .sort_values("Valor médio (R$)", ascending=False)
+                    .head(10)
+                )
                 fig10 = px.bar(
                     esp_avg,
                     x="Valor médio (R$)",
                     y="Especialidade",
                     orientation="h",
-                    title="Valor médio de aluguel por especialidade",
+                    title="Top 10 valores médios de aluguel por especialidade",
                     text="Valor médio (R$)",
                 )
                 fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
