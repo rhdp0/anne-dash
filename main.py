@@ -740,7 +740,7 @@ if selected_section == "🏆 Ranking":
                             container.info("Sem registros para os filtros atuais.")
                             return
 
-                        display_df = dataset.copy()
+                        display_df = dataset.sort_values(value_col, ascending=False).copy()
                         display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
                         if is_currency:
                             display_df["__text"] = display_df[value_col].apply(format_currency_value)
@@ -787,7 +787,7 @@ if selected_section == "🏆 Ranking":
                             )
                         fig.update_yaxes(
                             categoryorder="array",
-                            categoryarray=display_df[label_col].tolist()[::-1],
+                            categoryarray=display_df[label_col].tolist(),
                         )
                         container.plotly_chart(fig, width="stretch")
                         ranking_pdf_figures.append((title, fig))
@@ -848,7 +848,11 @@ if selected_section == "🏆 Ranking":
                     graf_receita_consult, graf_receita_medico = sec.columns(2)
 
                     if not receita_por_consultorio.empty:
-                        consult_display = receita_por_consultorio.head(15).copy()
+                        consult_display = (
+                            receita_por_consultorio.sort_values("Receita Total", ascending=False)
+                            .head(15)
+                            .copy()
+                        )
                         consult_display["Receita Formatada"] = consult_display["Receita Total"].apply(
                             format_currency_value
                         )
@@ -863,7 +867,7 @@ if selected_section == "🏆 Ranking":
                         fig_receita_consult.update_traces(textposition="outside")
                         fig_receita_consult.update_yaxes(
                             categoryorder="array",
-                            categoryarray=consult_display["Consultório"].tolist()[::-1],
+                            categoryarray=consult_display["Consultório"].tolist(),
                         )
                         graf_receita_consult.plotly_chart(fig_receita_consult, width="stretch")
                         ranking_pdf_figures.append(("Top consultórios por receita", fig_receita_consult))
@@ -871,7 +875,11 @@ if selected_section == "🏆 Ranking":
                         graf_receita_consult.info("Sem dados de receita por consultório.")
 
                     if not receita_por_medico.empty:
-                        med_display = receita_por_medico.head(15).copy()
+                        med_display = (
+                            receita_por_medico.sort_values("Receita Total", ascending=False)
+                            .head(15)
+                            .copy()
+                        )
                         med_display["Receita Formatada"] = med_display["Receita Total"].apply(
                             format_currency_value
                         )
@@ -886,7 +894,7 @@ if selected_section == "🏆 Ranking":
                         fig_receita_medico.update_traces(textposition="outside")
                         fig_receita_medico.update_yaxes(
                             categoryorder="array",
-                            categoryarray=med_display["Profissional"].tolist()[::-1],
+                            categoryarray=med_display["Profissional"].tolist(),
                         )
                         graf_receita_medico.plotly_chart(fig_receita_medico, width="stretch")
                         ranking_pdf_figures.append(("Top médicos por receita consolidada", fig_receita_medico))
@@ -1093,11 +1101,11 @@ if selected_section == "🔍 Consultórios":
                                 st.info("Sem registros para os filtros atuais.")
                                 return
 
-                            display_df = dataset.copy()
-                            display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
-                            if is_currency:
-                                display_df["__text"] = display_df[value_col].apply(format_currency_value)
-                            else:
+                        display_df = dataset.sort_values(value_col, ascending=False).copy()
+                        display_df[value_col] = pd.to_numeric(display_df[value_col], errors="coerce").fillna(0)
+                        if is_currency:
+                            display_df["__text"] = display_df[value_col].apply(format_currency_value)
+                        else:
                                 display_df[value_col] = display_df[value_col].round().astype(int)
                                 display_df["__text"] = display_df[value_col]
                             fig = px.bar(
@@ -1130,7 +1138,7 @@ if selected_section == "🔍 Consultórios":
                                 )
                             fig.update_yaxes(
                                 categoryorder="array",
-                                categoryarray=display_df["EtiquetaLocal"].tolist()[::-1],
+                                categoryarray=display_df["EtiquetaLocal"].tolist(),
                             )
                             st.plotly_chart(fig, width="stretch")
                             consultorio_pdf_figures.setdefault(sala_label_pdf, []).append((title, fig))
@@ -1205,7 +1213,9 @@ if selected_section == "🔍 Consultórios":
                     top_total_ind if not top_total_ind.empty else pd.DataFrame(columns=["EtiquetaLocal", "Total Procedimentos"])
                 )
                 if not top_med_ind.empty:
-                    top_med_ind_display = top_med_ind.copy()
+                    top_med_ind_display = top_med_ind.sort_values(
+                        "Total Procedimentos", ascending=False
+                    ).copy()
                     top_med_ind_display["Total Solicitações"] = top_med_ind_display["Total Procedimentos"]
                     fig_top_ind = px.bar(
                         top_med_ind_display,
@@ -1226,7 +1236,7 @@ if selected_section == "🔍 Consultórios":
                     )
                     fig_top_ind.update_yaxes(
                         categoryorder="array",
-                        categoryarray=top_med_ind_display["EtiquetaLocal"].tolist()[::-1],
+                        categoryarray=top_med_ind_display["EtiquetaLocal"].tolist(),
                     )
                     st.plotly_chart(
                         fig_top_ind,
@@ -1242,7 +1252,9 @@ if selected_section == "🔍 Consultórios":
                     )
 
                 if not top_receita_ind.empty and top_receita_ind["Receita"].sum() > 0:
-                    top_receita_display = top_receita_ind.copy()
+                    top_receita_display = top_receita_ind.sort_values(
+                        "Receita", ascending=False
+                    ).copy()
                     top_receita_display["Receita Formatada"] = top_receita_display["Receita"].apply(
                         format_currency_value
                     )
@@ -1265,7 +1277,7 @@ if selected_section == "🔍 Consultórios":
                     )
                     fig_top_receita.update_yaxes(
                         categoryorder="array",
-                        categoryarray=top_receita_display["EtiquetaLocal"].tolist()[::-1],
+                        categoryarray=top_receita_display["EtiquetaLocal"].tolist(),
                     )
                     st.plotly_chart(
                         fig_top_receita,
