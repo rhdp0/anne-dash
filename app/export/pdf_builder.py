@@ -133,6 +133,9 @@ class DashboardPDFBuilder:
         consultorio_figures: Optional[
             Dict[str, Union[Dict[str, go.Figure], Sequence[Tuple[str, go.Figure]]]]
         ] = None,
+        planos_consultorio_figures: Optional[
+            Dict[str, Union[Dict[str, go.Figure], Sequence[Tuple[str, go.Figure]]]]
+        ] = None,
         planos_figures: Optional[
             Union[
                 Dict[str, go.Figure],
@@ -180,7 +183,15 @@ class DashboardPDFBuilder:
             for consultorio, payload in consultorio_figures.items():
                 figures = self._normalize_figures(payload)
                 if figures:
-                    self.consultorio_figures[str(consultorio)] = figures
+                    key = self._normalize_consultorio_label(consultorio)
+                    self.consultorio_figures[key] = figures
+        self.planos_consultorio_figures: Dict[str, List[Tuple[str, go.Figure]]] = {}
+        if planos_consultorio_figures:
+            normalized_groups = self._normalize_figures(
+                planos_consultorio_figures, allow_groups=True
+            )
+            if isinstance(normalized_groups, dict):
+                self.planos_consultorio_figures = normalized_groups
 
     # ------------------------------------------------------------------
     # Public API
@@ -417,7 +428,18 @@ class DashboardPDFBuilder:
                 Sequence[Tuple[str, go.Figure]],
             ]
         ],
-    ) -> List[Tuple[str, go.Figure]]:
+        *,
+        allow_groups: bool = False,
+    ) -> Union[List[Tuple[str, go.Figure]], Dict[str, List[Tuple[str, go.Figure]]]]:
+        if allow_groups and isinstance(figures, dict):
+            normalized_groups: Dict[str, List[Tuple[str, go.Figure]]] = {}
+            for label, payload in figures.items():
+                normalized_payload = self._normalize_figures(payload)
+                if normalized_payload:
+                    key = self._normalize_consultorio_label(label)
+                    normalized_groups[key] = normalized_payload
+            return normalized_groups
+
         normalized: List[Tuple[str, go.Figure]] = []
         if not figures:
             return normalized
@@ -432,6 +454,17 @@ class DashboardPDFBuilder:
                 caption = str(label).strip() if label is not None else "Gráfico"
                 normalized.append((caption, figure))
         return normalized
+
+    def _normalize_consultorio_label(self, value: object) -> str:
+        if value is None:
+            return "Não informado"
+        try:
+            if pd.isna(value):
+                return "Não informado"
+        except TypeError:
+            pass
+        text = str(value).strip()
+        return text if text else "Não informado"
 
     def _figure_to_image(
         self, figure: go.Figure
@@ -980,13 +1013,22 @@ class DashboardPDFBuilder:
             titulo = str(consultorio).strip() or "Consultório não informado"
             self._draw_subsection_header(titulo)
 
+            figuras_consultorio = (
+                self.consultorio_figures.get(titulo)
+                or self.consultorio_figures.get(str(consultorio))
+            )
+
+            has_content = False
+            if figuras_consultorio:
+                self._draw_figures_group(figuras_consultorio)
+                has_content = True
+
             metrics_bundle: Dict[str, object] = {}
             if isinstance(payload, dict):
                 raw_metrics = payload.get("metrics") or payload.get("kpis")
                 if isinstance(raw_metrics, dict):
                     metrics_bundle = raw_metrics
 
-            has_content = False
             if metrics_bundle:
                 self._draw_kpi_cards(metrics_bundle)
                 has_content = True
@@ -1001,7 +1043,7 @@ class DashboardPDFBuilder:
                 elif isinstance(source, dict):
                     top_data = pd.DataFrame([source])
 
-            if not top_data.empty:
+            if not top_data.empty and not figuras_consultorio:
                 top_data = top_data.head(8).copy()
 
                 def _format_int(value: object) -> object:
@@ -1049,7 +1091,7 @@ class DashboardPDFBuilder:
                 elif isinstance(source, dict):
                     agenda_data = pd.DataFrame([source])
 
-            if not agenda_data.empty:
+            if not agenda_data.empty and not figuras_consultorio:
                 agenda_data = agenda_data.head(12).copy()
 
                 def _format_numeric(value: object) -> object:
@@ -1075,16 +1117,6 @@ class DashboardPDFBuilder:
                     self._write_body_line("Agenda resumida", height=5)
                     self._draw_table(agenda_columns, agenda_data)
                     has_content = True
-
-            figuras_consultorio = (
-                self.consultorio_figures.get(titulo)
-                or self.consultorio_figures.get(str(consultorio))
-            )
-            if figuras_consultorio:
-                if not has_content:
-                    self._write_body_line("Visualizações do consultório", height=5)
-                self._draw_figures_group(figuras_consultorio)
-                has_content = True
 
             if not has_content:
                 self._write_body_line(
@@ -1113,119 +1145,47 @@ class DashboardPDFBuilder:
         total_profissionais = (
             med_pdf["Médico"].nunique() if "Médico" in med_pdf.columns else len(med_pdf)
         )
-        self._write_body_line(f"Profissionais analisados: {total_profissionais}")
+        self._write_body_line(
+            f"Profissionais analisados: {total_profissionais}", height=5
+        )
 
-        if "Planos" in med_pdf.columns:
-            self._draw_subsection_header("Distribuição por planos")
-            planos = med_pdf.copy()
-            planos["Planos"] = _normalized_planos(planos["Planos"])
-            if "Médico" in planos.columns:
-                planos_grouped = (
-                    planos.groupby("Planos", observed=False)["Médico"].nunique().reset_index(name="Profissionais")
-                )
-            else:
-                planos_grouped = planos["Planos"].value_counts().reset_index()
-                planos_grouped.columns = ["Planos", "Profissionais"]
-            planos_grouped = planos_grouped.sort_values("Profissionais", ascending=False)
-            for _, row in planos_grouped.head(5).iterrows():
-                plano_nome = row.get("Planos", "Nao informado")
-                qtd = self._safe_int(row.get("Profissionais", 0)) or 0
-                self._write_body_line(f"- {plano_nome}: {qtd} profissionais", height=5)
-
+        consultorio_labels: List[str] = []
         if "Consultório" in med_pdf.columns:
-            self._draw_subsection_header("Totais por consultório")
-            consult = med_pdf.copy()
-            consult["Consultório"] = consult["Consultório"].fillna("Nao informado").astype(str).str.strip()
-            consult_totais = consult.groupby("Consultório", observed=False)
-            consult_resumo = consult_totais["Médico"].nunique().reset_index(name="Profissionais")
-            if "Valor Aluguel" in consult.columns:
-                consult_resumo["Valor total aluguel"] = consult_totais["Valor Aluguel"].sum(
-                    min_count=1
-                )
-            if "Valor total aluguel" in consult_resumo.columns:
-                consult_resumo = consult_resumo.sort_values(
-                    ["Valor total aluguel", "Profissionais"],
-                    ascending=[False, False],
-                    na_position="last",
-                )
-            else:
-                consult_resumo = consult_resumo.sort_values(
-                    "Profissionais", ascending=False, na_position="last"
-                )
-            for _, row in consult_resumo.head(5).iterrows():
-                texto = (
-                    f"- {row.get('Consultório', 'Nao informado')}: "
-                    f"{int(row.get('Profissionais', 0))} profissionais"
-                )
-                if (
-                    "Valor total aluguel" in consult_resumo.columns
-                    and pd.notna(row.get("Valor total aluguel"))
-                ):
-                    texto += (
-                        f" | Valor total: {self._format_currency(row['Valor total aluguel'])}"
-                    )
-                self._write_body_line(texto, height=5)
+            consultorio_labels = [
+                self._normalize_consultorio_label(value)
+                for value in med_pdf["Consultório"].unique().tolist()
+            ]
 
-            if "Planos" in consult.columns and "Médico" in consult.columns:
-                self._draw_subsection_header("Convênios ativos por consultório")
-                consult_planos_pdf = consult.copy()
-                consult_planos_pdf["Planos"] = _normalized_planos(
-                    consult_planos_pdf["Planos"]
-                )
-                consult_planos_pdf = (
-                    consult_planos_pdf.groupby(["Consultório", "Planos"], observed=False)["Médico"].nunique().reset_index(name="Profissionais")
-                )
-                consult_planos_pdf = consult_planos_pdf[
-                    consult_planos_pdf["Profissionais"].gt(0)
-                ]
-                if not consult_planos_pdf.empty:
-                    consult_planos_pdf = consult_planos_pdf.sort_values(
-                        ["Consultório", "Profissionais", "Planos"],
-                        ascending=[True, False, True],
-                    )
-                    for consultorio_nome, grupo in consult_planos_pdf.groupby(
-                        "Consultório", observed=False
-                    ):
-                        grupo_top = grupo.head(5)
-                        convenios_txt: List[str] = []
-                        for _, plano_row in grupo_top.iterrows():
-                            qtd = self._safe_int(plano_row.get("Profissionais", 0)) or 0
-                            plano_nome = (
-                                plano_row.get("Planos", "Nao informado") or "Nao informado"
-                            )
-                            sufixo = "profissional" if qtd == 1 else "profissionais"
-                            convenios_txt.append(f"{plano_nome}: {qtd} {sufixo}")
+        grouped_keys = list(self.planos_consultorio_figures.keys())
+        if grouped_keys:
+            consultorio_labels = sorted(set(consultorio_labels + grouped_keys))
 
-                        self._write_body_line(f"- {consultorio_nome}:", height=5)
-                        if convenios_txt:
-                            for item in convenios_txt:
-                                self._write_body_line(f"• {item}", height=5, indent=5)
-                        else:
-                            self._write_body_line(
-                                "• Nenhum convênio informado", height=5, indent=5
-                            )
-                        self.pdf.ln(1)
+        has_grouped_content = False
+        for consultorio in consultorio_labels:
+            figures = self.planos_consultorio_figures.get(consultorio)
+            if not figures:
+                continue
+            has_grouped_content = True
+            self._draw_subsection_header(f"Consultório: {consultorio}")
+            self._draw_figures_group(figures)
 
-        if self.planos_figures:
+        if not has_grouped_content and self.planos_figures:
+            self._write_body_line(
+                "Visualizações resumem planos, consultórios e valores praticados.",
+                height=5,
+            )
             self.pdf.ln(1)
             self._draw_figures_group(self.planos_figures)
-
-        if "Valor Aluguel" in med_pdf.columns:
-            valores = med_pdf["Valor Aluguel"].dropna()
-            if not valores.empty:
-                self._draw_subsection_header("Valores de aluguel")
-                media = valores.mean()
-                minimo = valores.min()
-                maximo = valores.max()
-                self._write_body_line(
-                    f"- Média: {self._format_currency(media)}", height=5
-                )
-                self._write_body_line(
-                    f"- Mínimo: {self._format_currency(minimo)}", height=5
-                )
-                self._write_body_line(
-                    f"- Máximo: {self._format_currency(maximo)}", height=5
-                )
+        elif not has_grouped_content and not self.planos_figures:
+            self._write_body_line(
+                "Sem gráficos disponíveis para planos e aluguel.", height=5
+            )
+        elif self.planos_figures:
+            self._write_body_line(
+                "Visão consolidada de planos e aluguel.", height=5
+            )
+            self.pdf.ln(1)
+            self._draw_figures_group(self.planos_figures)
 
     def _render_toc(self) -> None:
         if not self.sections_index:

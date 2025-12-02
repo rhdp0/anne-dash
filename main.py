@@ -535,6 +535,7 @@ if "Receita total (produtividade)" in summary_metrics:
 overview_pdf_figures: List[Tuple[str, object]] = []
 ranking_pdf_figures: List[Tuple[str, object]] = []
 planos_pdf_figures: List[Tuple[str, object]] = []
+planos_consultorio_figures: Dict[str, List[Tuple[str, object]]] = {}
 consultorio_pdf_figures: Dict[str, List[Tuple[str, object]]] = {}
 
 if selected_section == "📊 Visão Geral":
@@ -1506,6 +1507,7 @@ if consultorio_alvo:
         sala_label = format_consultorio_label(sala_nome)
         entry: Dict[str, object] = {}
         metrics_map: Dict[str, object] = {}
+        sala_kpi = None
 
         if not fdf_base.empty and not fdf_base_norm.empty:
             sala_base_df = fdf_base.loc[fdf_base_norm == sala_label]
@@ -1628,6 +1630,22 @@ if consultorio_alvo:
                     agenda_summary = agenda_summary.sort_values(group_columns)
                     entry["agenda_resumo"] = agenda_summary.head(12)
 
+        figuras_pdf_sala = consultorio_pdf_figures.setdefault(sala_label, [])
+        if not figuras_pdf_sala and sala_kpi is not None:
+            fallback_fig = px.bar(
+                x=["Ocupados", "Livres"],
+                y=[sala_kpi.slots_ocupados, sala_kpi.slots_livres],
+                labels={"x": "Status", "y": "Slots"},
+                title=f"Distribuição de slots - {sala_label}",
+            )
+            figuras_pdf_sala.append(
+                (
+                    fallback_fig.layout.title.text
+                    or f"Distribuição de slots - {sala_label}",
+                    fallback_fig,
+                )
+            )
+
         if entry:
             consultorios_pdf_data[sala_label] = entry
 
@@ -1649,6 +1667,7 @@ pdf_builder = DashboardPDFBuilder(
     overview_figures=overview_pdf_figures,
     ranking_figures=ranking_pdf_figures,
     consultorio_figures=consultorio_pdf_figures,
+    planos_consultorio_figures=planos_consultorio_figures,
     planos_figures=planos_pdf_figures,
 )
 pdf_bytes = pdf_builder.build()
@@ -1853,15 +1872,16 @@ if selected_section == "💼 Planos & Aluguel":
                     med_enriched.groupby("Especialidade")["Valor Aluguel"]
                     .mean()
                     .reset_index(name="Valor médio (R$)")
-                    .sort_values("Valor médio (R$)", ascending=False)
-                    .head(10)
                 )
+                esp_avg = esp_avg[esp_avg["Valor médio (R$)"].notna()]
+                esp_avg = esp_avg[esp_avg["Valor médio (R$)"] != 0]
+                esp_avg = esp_avg.sort_values("Valor médio (R$)", ascending=False)
                 fig10 = px.bar(
                     esp_avg,
                     x="Valor médio (R$)",
                     y="Especialidade",
                     orientation="h",
-                    title="Top 10 valores médios de aluguel por especialidade",
+                    title="Valores médios de aluguel por especialidade",
                     text="Valor médio (R$)",
                 )
                 fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
@@ -1933,7 +1953,7 @@ if selected_section == "💼 Planos & Aluguel":
                                     showlegend=False,
                                 )
                                 st.plotly_chart(fig_cons_planos, width="stretch")
-                                planos_pdf_figures.append(
+                                planos_consultorio_figures.setdefault(display_nome, []).append(
                                     (
                                         fig_cons_planos.layout.title.text
                                         or f"Convênios atendidos no {display_nome}",
@@ -1992,7 +2012,9 @@ if selected_section == "💼 Planos & Aluguel":
                         )
                         fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
                         st.plotly_chart(fig_cons_valor, width="stretch")
-                        planos_pdf_figures.append(("Valor total de aluguel por consultório", fig_cons_valor))
+                        planos_consultorio_figures.setdefault(
+                            "Todos consultórios", []
+                        ).append(("Valor total de aluguel por consultório", fig_cons_valor))
                     else:
                         st.info("Nenhum valor de aluguel informado para os consultórios listados.")
                 else:
@@ -2008,7 +2030,9 @@ if selected_section == "💼 Planos & Aluguel":
                     )
                     fig_cons_prof.update_traces(textposition="outside")
                     st.plotly_chart(fig_cons_prof, width="stretch")
-                    planos_pdf_figures.append(("Profissionais por consultório", fig_cons_prof))
+                    planos_consultorio_figures.setdefault(
+                        "Todos consultórios", []
+                    ).append(("Profissionais por consultório", fig_cons_prof))
                 else:
                     st.info("Inclua 'Consultório' para visualizar a distribuição de profissionais.")
 
