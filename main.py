@@ -535,6 +535,7 @@ if "Receita total (produtividade)" in summary_metrics:
 overview_pdf_figures: List[Tuple[str, object]] = []
 ranking_pdf_figures: List[Tuple[str, object]] = []
 planos_pdf_figures: List[Tuple[str, object]] = []
+planos_consultorio_figures: Dict[str, List[Tuple[str, object]]] = {}
 consultorio_pdf_figures: Dict[str, List[Tuple[str, object]]] = {}
 
 if selected_section == "📊 Visão Geral":
@@ -1666,6 +1667,7 @@ pdf_builder = DashboardPDFBuilder(
     overview_figures=overview_pdf_figures,
     ranking_figures=ranking_pdf_figures,
     consultorio_figures=consultorio_pdf_figures,
+    planos_consultorio_figures=planos_consultorio_figures,
     planos_figures=planos_pdf_figures,
 )
 pdf_bytes = pdf_builder.build()
@@ -1950,7 +1952,7 @@ if selected_section == "💼 Planos & Aluguel":
                                     showlegend=False,
                                 )
                                 st.plotly_chart(fig_cons_planos, width="stretch")
-                                planos_pdf_figures.append(
+                                planos_consultorio_figures.setdefault(display_nome, []).append(
                                     (
                                         fig_cons_planos.layout.title.text
                                         or f"Convênios atendidos no {display_nome}",
@@ -2009,7 +2011,9 @@ if selected_section == "💼 Planos & Aluguel":
                         )
                         fig_cons_valor.update_layout(xaxis_title="Consultório", yaxis_title="Valor total (R$)")
                         st.plotly_chart(fig_cons_valor, width="stretch")
-                        planos_pdf_figures.append(("Valor total de aluguel por consultório", fig_cons_valor))
+                        planos_consultorio_figures.setdefault(
+                            "Todos consultórios", []
+                        ).append(("Valor total de aluguel por consultório", fig_cons_valor))
                     else:
                         st.info("Nenhum valor de aluguel informado para os consultórios listados.")
                 else:
@@ -2025,7 +2029,9 @@ if selected_section == "💼 Planos & Aluguel":
                     )
                     fig_cons_prof.update_traces(textposition="outside")
                     st.plotly_chart(fig_cons_prof, width="stretch")
-                    planos_pdf_figures.append(("Profissionais por consultório", fig_cons_prof))
+                    planos_consultorio_figures.setdefault(
+                        "Todos consultórios", []
+                    ).append(("Profissionais por consultório", fig_cons_prof))
                 else:
                     st.info("Inclua 'Consultório' para visualizar a distribuição de profissionais.")
 
