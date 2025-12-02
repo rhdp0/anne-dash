@@ -1506,6 +1506,7 @@ if consultorio_alvo:
         sala_label = format_consultorio_label(sala_nome)
         entry: Dict[str, object] = {}
         metrics_map: Dict[str, object] = {}
+        sala_kpi = None
 
         if not fdf_base.empty and not fdf_base_norm.empty:
             sala_base_df = fdf_base.loc[fdf_base_norm == sala_label]
@@ -1627,6 +1628,22 @@ if consultorio_alvo:
 
                     agenda_summary = agenda_summary.sort_values(group_columns)
                     entry["agenda_resumo"] = agenda_summary.head(12)
+
+        figuras_pdf_sala = consultorio_pdf_figures.setdefault(sala_label, [])
+        if not figuras_pdf_sala and sala_kpi is not None:
+            fallback_fig = px.bar(
+                x=["Ocupados", "Livres"],
+                y=[sala_kpi.slots_ocupados, sala_kpi.slots_livres],
+                labels={"x": "Status", "y": "Slots"},
+                title=f"Distribuição de slots - {sala_label}",
+            )
+            figuras_pdf_sala.append(
+                (
+                    fallback_fig.layout.title.text
+                    or f"Distribuição de slots - {sala_label}",
+                    fallback_fig,
+                )
+            )
 
         if entry:
             consultorios_pdf_data[sala_label] = entry
