@@ -1872,15 +1872,16 @@ if selected_section == "💼 Planos & Aluguel":
                     med_enriched.groupby("Especialidade")["Valor Aluguel"]
                     .mean()
                     .reset_index(name="Valor médio (R$)")
-                    .sort_values("Valor médio (R$)", ascending=False)
-                    .head(10)
                 )
+                esp_avg = esp_avg[esp_avg["Valor médio (R$)"].notna()]
+                esp_avg = esp_avg[esp_avg["Valor médio (R$)"] != 0]
+                esp_avg = esp_avg.sort_values("Valor médio (R$)", ascending=False)
                 fig10 = px.bar(
                     esp_avg,
                     x="Valor médio (R$)",
                     y="Especialidade",
                     orientation="h",
-                    title="Top 10 valores médios de aluguel por especialidade",
+                    title="Valores médios de aluguel por especialidade",
                     text="Valor médio (R$)",
                 )
                 fig10.update_traces(texttemplate="R$ %{x:.2f}", textposition="outside")
