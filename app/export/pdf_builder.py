@@ -12,6 +12,8 @@ from fpdf import FPDF
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from app.data import normalize_plano_value
+
 
 PDF_PRIMARY_COLOR = (27, 59, 95)
 PDF_ACCENT_COLOR = (76, 137, 198)
@@ -94,6 +96,11 @@ def _sanitize_pdf_text(text: str) -> str:
 
     cleaned = cleaned.encode("latin-1", "ignore").decode("latin-1")
     return cleaned
+
+
+def _normalized_planos(series: pd.Series) -> pd.Series:
+    planos_norm = series.apply(normalize_plano_value)
+    return planos_norm.replace("", "NAO INFORMADO").fillna("NAO INFORMADO")
 
 
 class DashboardPDFBuilder:
@@ -1111,7 +1118,7 @@ class DashboardPDFBuilder:
         if "Planos" in med_pdf.columns:
             self._draw_subsection_header("Distribuição por planos")
             planos = med_pdf.copy()
-            planos["Planos"] = planos["Planos"].fillna("Nao informado").astype(str).str.strip()
+            planos["Planos"] = _normalized_planos(planos["Planos"])
             if "Médico" in planos.columns:
                 planos_grouped = (
                     planos.groupby("Planos", observed=False)["Médico"].nunique().reset_index(name="Profissionais")
@@ -1162,8 +1169,8 @@ class DashboardPDFBuilder:
             if "Planos" in consult.columns and "Médico" in consult.columns:
                 self._draw_subsection_header("Convênios ativos por consultório")
                 consult_planos_pdf = consult.copy()
-                consult_planos_pdf["Planos"] = (
-                    consult_planos_pdf["Planos"].fillna("Nao informado").astype(str).str.strip()
+                consult_planos_pdf["Planos"] = _normalized_planos(
+                    consult_planos_pdf["Planos"]
                 )
                 consult_planos_pdf = (
                     consult_planos_pdf.groupby(["Consultório", "Planos"], observed=False)["Médico"].nunique().reset_index(name="Profissionais")
