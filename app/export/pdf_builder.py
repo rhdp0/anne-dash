@@ -133,6 +133,9 @@ class DashboardPDFBuilder:
         consultorio_figures: Optional[
             Dict[str, Union[Dict[str, go.Figure], Sequence[Tuple[str, go.Figure]]]]
         ] = None,
+        planos_consultorio_figures: Optional[
+            Dict[str, Union[Dict[str, go.Figure], Sequence[Tuple[str, go.Figure]]]]
+        ] = None,
         planos_figures: Optional[
             Union[
                 Dict[str, go.Figure],
@@ -180,7 +183,15 @@ class DashboardPDFBuilder:
             for consultorio, payload in consultorio_figures.items():
                 figures = self._normalize_figures(payload)
                 if figures:
-                    self.consultorio_figures[str(consultorio)] = figures
+                    key = self._normalize_consultorio_label(consultorio)
+                    self.consultorio_figures[key] = figures
+        self.planos_consultorio_figures: Dict[str, List[Tuple[str, go.Figure]]] = {}
+        if planos_consultorio_figures:
+            normalized_groups = self._normalize_figures(
+                planos_consultorio_figures, allow_groups=True
+            )
+            if isinstance(normalized_groups, dict):
+                self.planos_consultorio_figures = normalized_groups
 
     # ------------------------------------------------------------------
     # Public API
@@ -417,7 +428,18 @@ class DashboardPDFBuilder:
                 Sequence[Tuple[str, go.Figure]],
             ]
         ],
-    ) -> List[Tuple[str, go.Figure]]:
+        *,
+        allow_groups: bool = False,
+    ) -> Union[List[Tuple[str, go.Figure]], Dict[str, List[Tuple[str, go.Figure]]]]:
+        if allow_groups and isinstance(figures, dict):
+            normalized_groups: Dict[str, List[Tuple[str, go.Figure]]] = {}
+            for label, payload in figures.items():
+                normalized_payload = self._normalize_figures(payload)
+                if normalized_payload:
+                    key = self._normalize_consultorio_label(label)
+                    normalized_groups[key] = normalized_payload
+            return normalized_groups
+
         normalized: List[Tuple[str, go.Figure]] = []
         if not figures:
             return normalized
@@ -432,6 +454,17 @@ class DashboardPDFBuilder:
                 caption = str(label).strip() if label is not None else "Gráfico"
                 normalized.append((caption, figure))
         return normalized
+
+    def _normalize_consultorio_label(self, value: object) -> str:
+        if value is None:
+            return "Não informado"
+        try:
+            if pd.isna(value):
+                return "Não informado"
+        except TypeError:
+            pass
+        text = str(value).strip()
+        return text if text else "Não informado"
 
     def _figure_to_image(
         self, figure: go.Figure
@@ -1116,17 +1149,43 @@ class DashboardPDFBuilder:
             f"Profissionais analisados: {total_profissionais}", height=5
         )
 
-        if self.planos_figures:
+        consultorio_labels: List[str] = []
+        if "Consultório" in med_pdf.columns:
+            consultorio_labels = [
+                self._normalize_consultorio_label(value)
+                for value in med_pdf["Consultório"].unique().tolist()
+            ]
+
+        grouped_keys = list(self.planos_consultorio_figures.keys())
+        if grouped_keys:
+            consultorio_labels = sorted(set(consultorio_labels + grouped_keys))
+
+        has_grouped_content = False
+        for consultorio in consultorio_labels:
+            figures = self.planos_consultorio_figures.get(consultorio)
+            if not figures:
+                continue
+            has_grouped_content = True
+            self._draw_subsection_header(f"Consultório: {consultorio}")
+            self._draw_figures_group(figures)
+
+        if not has_grouped_content and self.planos_figures:
             self._write_body_line(
                 "Visualizações resumem planos, consultórios e valores praticados.",
                 height=5,
             )
             self.pdf.ln(1)
             self._draw_figures_group(self.planos_figures)
-        else:
+        elif not has_grouped_content and not self.planos_figures:
             self._write_body_line(
                 "Sem gráficos disponíveis para planos e aluguel.", height=5
             )
+        elif self.planos_figures:
+            self._write_body_line(
+                "Visão consolidada de planos e aluguel.", height=5
+            )
+            self.pdf.ln(1)
+            self._draw_figures_group(self.planos_figures)
 
     def _render_toc(self) -> None:
         if not self.sections_index:
