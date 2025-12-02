@@ -980,13 +980,22 @@ class DashboardPDFBuilder:
             titulo = str(consultorio).strip() or "Consultório não informado"
             self._draw_subsection_header(titulo)
 
+            figuras_consultorio = (
+                self.consultorio_figures.get(titulo)
+                or self.consultorio_figures.get(str(consultorio))
+            )
+
+            has_content = False
+            if figuras_consultorio:
+                self._draw_figures_group(figuras_consultorio)
+                has_content = True
+
             metrics_bundle: Dict[str, object] = {}
             if isinstance(payload, dict):
                 raw_metrics = payload.get("metrics") or payload.get("kpis")
                 if isinstance(raw_metrics, dict):
                     metrics_bundle = raw_metrics
 
-            has_content = False
             if metrics_bundle:
                 self._draw_kpi_cards(metrics_bundle)
                 has_content = True
@@ -1001,7 +1010,7 @@ class DashboardPDFBuilder:
                 elif isinstance(source, dict):
                     top_data = pd.DataFrame([source])
 
-            if not top_data.empty:
+            if not top_data.empty and not figuras_consultorio:
                 top_data = top_data.head(8).copy()
 
                 def _format_int(value: object) -> object:
@@ -1049,7 +1058,7 @@ class DashboardPDFBuilder:
                 elif isinstance(source, dict):
                     agenda_data = pd.DataFrame([source])
 
-            if not agenda_data.empty:
+            if not agenda_data.empty and not figuras_consultorio:
                 agenda_data = agenda_data.head(12).copy()
 
                 def _format_numeric(value: object) -> object:
@@ -1075,16 +1084,6 @@ class DashboardPDFBuilder:
                     self._write_body_line("Agenda resumida", height=5)
                     self._draw_table(agenda_columns, agenda_data)
                     has_content = True
-
-            figuras_consultorio = (
-                self.consultorio_figures.get(titulo)
-                or self.consultorio_figures.get(str(consultorio))
-            )
-            if figuras_consultorio:
-                if not has_content:
-                    self._write_body_line("Visualizações do consultório", height=5)
-                self._draw_figures_group(figuras_consultorio)
-                has_content = True
 
             if not has_content:
                 self._write_body_line(
